@@ -1,0 +1,16 @@
+build/
+CMakeFiles/
+cmake_install.cmake
+CMakeCache.txt
+Makefile
+*.o
+*.a
+*.so
+text-ed
+compile_commands.json
+.cache/
+.vscode/
+.idea/
+*.user
+*.autosave
+LLM/

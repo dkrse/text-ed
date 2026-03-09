@@ -1,0 +1,75 @@
+# TextEd
+
+A fast, feature-rich text editor built with Qt 6 and C++17. Designed for efficient editing of text files, with strong Markdown support, syntax highlighting for 27 programming languages, SSH remote editing, and a fully offline architecture.
+
+## Features
+
+- **Fast file handling** - chunked reading with progress indicator for large files (4 MB chunks)
+- **Tab-based interface** - multi-document editing with per-tab state
+- **Markdown support** - syntax highlighting in the editor and live HTML preview (Ctrl+Shift+P)
+- **LaTeX math rendering** - inline `$...$` and display `$$...$$` formulas via bundled KaTeX
+- **Mermaid diagrams** - rendered in the preview panel via bundled Mermaid.js
+- **Code block highlighting** - syntax-highlighted code blocks in preview via bundled highlight.js
+- **PDF export** - export the Markdown preview to PDF (View > Export Preview to PDF)
+- **Syntax highlighting** - 27 languages including C/C++, Python, JavaScript, Rust, Go, Java, and more
+- **Character encoding** - UTF-8, UTF-16 BE/LE, UTF-32 BE/LE, Latin-1, System; auto-detection via BOM
+- **Color themes** - 12 built-in themes (Default Light, Solarized Light, Monokai, Dracula, One Dark, Nord, Gruvbox Dark/Light, Tomorrow Night, GitHub Dark, Catppuccin Mocha/Latte)
+- **SSH remote editing** - connect to remote servers via SSH/SFTP, browse and edit files
+- **Fully offline** - all rendering resources (KaTeX, Mermaid, highlight.js) are bundled, no internet required
+- **Font zoom** - Ctrl+Plus / Ctrl+Minus
+- **Separate fonts** - independent font selection for GUI and editor text
+- **Configurable** - line numbers, word wrap, current line highlight, whitespace display, tab width
+
+## Requirements
+
+- Qt 6 (Widgets, Core, Gui, WebEngineWidgets, WebEngineQuick)
+- libssh2
+- CMake 3.16+
+- C++17 compiler
+
+### Installing dependencies (Debian/Ubuntu)
+
+```bash
+sudo apt install qt6-base-dev qt6-webengine-dev libssh2-1-dev cmake build-essential
+```
+
+## Building
+
+```bash
+mkdir build && cd build
+cmake ..
+make -j$(nproc)
+```
+
+The resulting binary is `build/text-ed`.
+
+## Usage
+
+```bash
+./text-ed                    # open with empty tab
+./text-ed file.txt           # open a file
+./text-ed file1.md file2.py  # open multiple files
+```
+
+### Keyboard shortcuts
+
+| Shortcut | Action |
+|---|---|
+| Ctrl+N | New file |
+| Ctrl+O | Open file |
+| Ctrl+S | Save |
+| Ctrl+Shift+S | Save As |
+| Ctrl+W | Close tab |
+| Ctrl+Shift+P | Toggle Markdown preview |
+| Ctrl+Plus | Zoom in |
+| Ctrl+Minus | Zoom out |
+| Ctrl+, | Preferences |
+| Ctrl+Q | Quit |
+
+## License
+
+MIT License. See [LICENSE](LICENSE) for details.
+
+## Author
+
+**krse**
