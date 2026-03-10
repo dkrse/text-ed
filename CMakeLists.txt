@@ -34,6 +34,8 @@ add_executable(text-ed
     src/LargeFileReader.h
     src/SearchBar.cpp
     src/SearchBar.h
+    src/Minimap.cpp
+    src/Minimap.h
     resources.qrc
 )
 

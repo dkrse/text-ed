@@ -9,7 +9,13 @@ A fast, feature-rich text editor built with Qt 6 and C++17. Designed for efficie
 - **Session restore** - remembers open files and restores them on next launch
 - **Recent files** - quick access to last 5 opened files (File > Recent Files)
 - **Find & Replace** - Ctrl+F / Ctrl+H with yellow match highlighting, scrollbar markers, match count, case-sensitive toggle
+- **Go to Line** - Ctrl+G to jump to a specific line number
 - **Undo / Redo** - full undo/redo support (Ctrl+Z / Ctrl+Shift+Z)
+- **Auto-indent** - preserves indentation when pressing Enter
+- **Bracket matching** - highlights paired `()`, `{}`, `[]` when cursor is adjacent
+- **Minimap** - VS Code-style code overview on the right side
+- **Auto-save** - configurable automatic saving at regular intervals
+- **Drag & Drop** - open files by dragging them into the window
 - **Markdown support** - syntax highlighting in the editor and live HTML preview (Ctrl+Shift+P)
 - **LaTeX math rendering** - inline `$...$` and display `$$...$$` formulas via bundled KaTeX
 - **Mermaid diagrams** - rendered in the preview panel via bundled Mermaid.js
@@ -22,7 +28,7 @@ A fast, feature-rich text editor built with Qt 6 and C++17. Designed for efficie
 - **Fully offline** - all rendering resources (KaTeX, Mermaid, highlight.js) are bundled, no internet required
 - **Font zoom** - Ctrl+Plus / Ctrl+Minus
 - **Separate fonts** - independent font selection for GUI and editor text
-- **Configurable** - line numbers, word wrap, current line highlight, whitespace display, tab width
+- **Configurable** - line numbers, word wrap, current line highlight, whitespace display, tab width, auto-indent, bracket matching, minimap, auto-save
 
 ## Requirements
 
@@ -68,6 +74,7 @@ The resulting binary is `build/text-ed`.
 | Ctrl+Shift+Z | Redo |
 | Ctrl+F | Find |
 | Ctrl+H | Find and Replace |
+| Ctrl+G | Go to Line |
 | F3 | Find next |
 | Shift+F3 | Find previous |
 | Ctrl+Shift+P | Toggle Markdown preview |

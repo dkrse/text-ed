@@ -82,6 +82,32 @@ QWidget *SettingsDialog::createEditorPage()
     tabLayout->addRow(tr("Tab Width:"), m_tabWidth);
     behaviorLayout->addLayout(tabLayout);
 
+    m_autoIndent = new QCheckBox(tr("Auto Indent"));
+    m_autoIndent->setChecked(m_original.autoIndent);
+    behaviorLayout->addWidget(m_autoIndent);
+
+    m_bracketMatching = new QCheckBox(tr("Bracket Matching"));
+    m_bracketMatching->setChecked(m_original.bracketMatching);
+    behaviorLayout->addWidget(m_bracketMatching);
+
+    m_autoSave = new QCheckBox(tr("Auto Save"));
+    m_autoSave->setChecked(m_original.autoSave);
+    behaviorLayout->addWidget(m_autoSave);
+
+    auto *autoSaveIntervalLayout = new QFormLayout;
+    m_autoSaveInterval = new QSpinBox;
+    m_autoSaveInterval->setRange(5, 600);
+    m_autoSaveInterval->setValue(m_original.autoSaveInterval);
+    m_autoSaveInterval->setSuffix(tr(" s"));
+    m_autoSaveInterval->setEnabled(m_original.autoSave);
+    autoSaveIntervalLayout->addRow(tr("Interval:"), m_autoSaveInterval);
+    behaviorLayout->addLayout(autoSaveIntervalLayout);
+    connect(m_autoSave, &QCheckBox::toggled, m_autoSaveInterval, &QSpinBox::setEnabled);
+
+    m_minimap = new QCheckBox(tr("Show Minimap"));
+    m_minimap->setChecked(m_original.minimap);
+    behaviorLayout->addWidget(m_minimap);
+
     layout->addWidget(behaviorGroup);
     layout->addStretch();
 
@@ -143,6 +169,11 @@ AppSettings SettingsDialog::settings() const
     s.showWhitespace = m_showWhitespace->isChecked();
     s.tabWidth = m_tabWidth->value();
     s.themeName = m_themeCombo->currentText();
+    s.autoIndent = m_autoIndent->isChecked();
+    s.bracketMatching = m_bracketMatching->isChecked();
+    s.autoSave = m_autoSave->isChecked();
+    s.autoSaveInterval = m_autoSaveInterval->value();
+    s.minimap = m_minimap->isChecked();
 
     return s;
 }

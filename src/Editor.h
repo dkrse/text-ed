@@ -44,6 +44,8 @@ public:
     void setHighlightCurrentLineEnabled(bool on);
     void setShowWhitespace(bool on);
     void setTabWidth(int width);
+    void setAutoIndent(bool on) { m_autoIndent = on; }
+    void setBracketMatching(bool on) { m_bracketMatching = on; highlightCurrentLine(); }
 
     void applySettings(const AppSettings &s);
     void applyTheme(const EditorTheme &theme);
@@ -88,6 +90,9 @@ private:
     QColor m_currentLineColor = QColor("#e8f0fe");
     QColor m_lineNumberBg = QColor("#f0f0f0");
     QColor m_lineNumberFg = QColor("#999999");
+
+    bool m_autoIndent = true;
+    bool m_bracketMatching = true;
 
     // Search state
     QList<QTextEdit::ExtraSelection> m_searchSelections;

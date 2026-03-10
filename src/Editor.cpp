@@ -153,6 +153,8 @@ void Editor::applySettings(const AppSettings &s)
     setShowWhitespace(s.showWhitespace);
     setTabWidth(s.tabWidth);
     setLineWrapMode(s.lineWrap ? QPlainTextEdit::WidgetWidth : QPlainTextEdit::NoWrap);
+    setAutoIndent(s.autoIndent);
+    setBracketMatching(s.bracketMatching);
 }
 
 void Editor::applyTheme(const EditorTheme &theme)
@@ -181,6 +183,19 @@ void Editor::keyPressEvent(QKeyEvent *event)
     if (event->modifiers() & Qt::ControlModifier) {
         if (event->key() == Qt::Key_Plus || event->key() == Qt::Key_Equal) { zoomInEditor(); return; }
         if (event->key() == Qt::Key_Minus) { zoomOutEditor(); return; }
+    }
+    if (m_autoIndent && (event->key() == Qt::Key_Return || event->key() == Qt::Key_Enter) && !(event->modifiers() & Qt::ShiftModifier)) {
+        QTextCursor c = textCursor();
+        QString lineText = c.block().text();
+        QString indent;
+        for (QChar ch : lineText) {
+            if (ch == ' ' || ch == '\t') indent += ch;
+            else break;
+        }
+        c.insertText("\n" + indent);
+        setTextCursor(c);
+        ensureCursorVisible();
+        return;
     }
     QPlainTextEdit::keyPressEvent(event);
 }
@@ -228,6 +243,57 @@ void Editor::updateAllSelections()
         sel.cursor = textCursor();
         sel.cursor.clearSelection();
         selections.append(sel);
+    }
+
+    // Bracket matching
+    if (m_bracketMatching) {
+        QTextCursor c = textCursor();
+        int pos = c.position();
+        QTextDocument *doc = document();
+        auto matchBracket = [&](int p, QChar open, QChar close, int direction) -> int {
+            int depth = 0;
+            int i = p;
+            while (i >= 0 && i < doc->characterCount()) {
+                QChar ch = doc->characterAt(i);
+                if (ch == open) depth++;
+                if (ch == close) depth--;
+                if (depth == 0) return i;
+                i += direction;
+            }
+            return -1;
+        };
+        auto tryMatch = [&](int p) {
+            if (p < 0 || p >= doc->characterCount()) return;
+            QChar ch = doc->characterAt(p);
+            int match = -1;
+            if (ch == '(') match = matchBracket(p, '(', ')', 1);
+            else if (ch == ')') match = matchBracket(p, ')', '(', -1);
+            else if (ch == '{') match = matchBracket(p, '{', '}', 1);
+            else if (ch == '}') match = matchBracket(p, '}', '{', -1);
+            else if (ch == '[') match = matchBracket(p, '[', ']', 1);
+            else if (ch == ']') match = matchBracket(p, ']', '[', -1);
+            else return;
+            if (match >= 0) {
+                QTextCharFormat fmt;
+                fmt.setBackground(QColor("#c8e6c9"));
+                fmt.setForeground(QColor("#1b5e20"));
+                fmt.setFontWeight(QFont::Bold);
+                QTextEdit::ExtraSelection sel1;
+                sel1.format = fmt;
+                sel1.cursor = QTextCursor(doc);
+                sel1.cursor.setPosition(p);
+                sel1.cursor.movePosition(QTextCursor::Right, QTextCursor::KeepAnchor);
+                selections.append(sel1);
+                QTextEdit::ExtraSelection sel2;
+                sel2.format = fmt;
+                sel2.cursor = QTextCursor(doc);
+                sel2.cursor.setPosition(match);
+                sel2.cursor.movePosition(QTextCursor::Right, QTextCursor::KeepAnchor);
+                selections.append(sel2);
+            }
+        };
+        tryMatch(pos);
+        if (pos > 0) tryMatch(pos - 1);
     }
 
     // Search highlights

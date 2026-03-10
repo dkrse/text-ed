@@ -18,6 +18,11 @@ struct AppSettings {
     bool showWhitespace = false;
     int tabWidth = 4;
     QString themeName = "Default Light";
+    bool autoIndent = true;
+    bool bracketMatching = true;
+    bool autoSave = false;
+    int autoSaveInterval = 60;
+    bool minimap = false;
 };
 
 class SettingsDialog : public QDialog
@@ -39,6 +44,11 @@ private:
     QCheckBox *m_lineWrap;
     QCheckBox *m_highlightCurrentLine;
     QCheckBox *m_showWhitespace;
+    QCheckBox *m_autoIndent;
+    QCheckBox *m_bracketMatching;
+    QCheckBox *m_autoSave;
+    QSpinBox *m_autoSaveInterval;
+    QCheckBox *m_minimap;
 
     QFontComboBox *m_guiFontCombo;
     QSpinBox *m_guiFontSize;

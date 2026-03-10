@@ -9,11 +9,13 @@ TextEd is a Qt 6 Widgets application written in C++17. It follows a modular desi
 ```
 MainWindow
 ├── QTabWidget (multi-document tabs)
-│   └── Editor (one per tab)
-│       ├── LineNumberArea
-│       ├── ScrollBarOverlay (search match markers)
-│       ├── MarkdownHighlighter (for .md files)
-│       └── CodeHighlighter (for code files)
+│   └── QWidget container (per tab)
+│       ├── Editor
+│       │   ├── LineNumberArea
+│       │   ├── ScrollBarOverlay (search match markers)
+│       │   ├── MarkdownHighlighter (for .md files)
+│       │   └── CodeHighlighter (for code files)
+│       └── Minimap (VS Code-style code overview)
 ├── QSplitter
 │   └── MarkdownPreview (QWebEngineView)
 ├── SearchBar (find & replace bar)
@@ -28,14 +30,20 @@ MainWindow
 | File | Description |
 |---|---|
 | `main.cpp` | Application entry point, initializes QtWebEngine and opens files from command line arguments |
-| `MainWindow.h/cpp` | Main application window with tab management, menus, status bar, settings, SSH integration, session restore, recent files |
-| `Editor.h/cpp` | `QPlainTextEdit` subclass with line number gutter, current line highlighting, font zoom, theme support, search match highlighting |
+| `MainWindow.h/cpp` | Main application window with tab management, menus, status bar, settings, SSH integration, session restore, recent files, auto-save, drag & drop |
+| `Editor.h/cpp` | `QPlainTextEdit` subclass with line number gutter, current line highlighting, font zoom, theme support, search match highlighting, auto-indent, bracket matching |
 
 ### Search & Replace
 
 | File | Description |
 |---|---|
 | `SearchBar.h/cpp` | Find/Replace bar widget with match navigation, match count display, case-sensitive toggle, replace and replace all |
+
+### Minimap
+
+| File | Description |
+|---|---|
+| `Minimap.h/cpp` | VS Code-style minimap widget. Renders each line as a 2px high colored strip proportional to text content. Shows visible area overlay. Debounced rebuild (150ms) for performance. |
 
 ### Syntax Highlighting
 
@@ -68,14 +76,14 @@ MainWindow
 
 | File | Description |
 |---|---|
-| `SettingsDialog.h/cpp` | Settings dialog with Editor and Appearance tabs. Defines `AppSettings` struct. |
+| `SettingsDialog.h/cpp` | Settings dialog with Editor and Appearance tabs. Defines `AppSettings` struct with all configurable options. |
 | `EditorTheme.h/cpp` | Defines `EditorTheme` struct with 12 built-in color themes |
 
 ## Key Design Decisions
 
 ### Tab-based multi-document model
 
-Each tab has an `Editor` widget and a `TabData` struct that stores per-tab state (file path, encoding, language, modified flag, preview visibility, remote file info). The `MainWindow` maintains a `QVector<TabData>` parallel to the `QTabWidget` indices.
+Each tab contains a QWidget container with an `Editor` and optional `Minimap` in an HBoxLayout. A `TabData` struct stores per-tab state (file path, encoding, language, modified flag, preview visibility, remote file info). The `MainWindow` maintains a `QVector<TabData>` parallel to the `QTabWidget` indices. Editors are retrieved from tab containers via `findChild<Editor*>()`.
 
 ### Session persistence
 
@@ -84,6 +92,22 @@ On application close, the list of open file paths and the active tab index are s
 ### Search and replace
 
 The search system uses `QTextEdit::ExtraSelection` to highlight all matches in yellow with the current match in orange. A `ScrollBarOverlay` widget is positioned on top of the vertical scrollbar to draw orange markers at match positions (hidden when scrollbar is not visible). Search results are capped at 10,000 matches to prevent UI lag on large files.
+
+### Minimap
+
+The minimap is a custom QWidget (not a QPlainTextEdit) that renders each line of code as a 2px high colored strip. Text content length and indentation are mapped to pixel positions, creating a dense bird's-eye view of the file structure. A semi-transparent blue overlay shows the currently visible area. The pixmap is rebuilt with a 150ms debounce timer. Clicking or dragging navigates the editor. Configurable in Settings.
+
+### Auto-indent and bracket matching
+
+Auto-indent preserves the leading whitespace of the current line when pressing Enter. Bracket matching highlights paired `()`, `{}`, `[]` characters in green when the cursor is adjacent. Both features are integrated into the `Editor` class and configurable in Settings.
+
+### Auto-save
+
+A `QTimer` periodically saves all modified tabs that have a file path (skipping untitled and remote files). The interval is configurable in Settings (5-600 seconds). The timer is stopped when auto-save is disabled.
+
+### Drag & Drop
+
+The main window accepts file drops via `dragEnterEvent`/`dropEvent`. Dropped files with `file://` URLs are opened as new tabs.
 
 ### Offline-first architecture
 
@@ -99,7 +123,7 @@ The preview is updated via a debounced `QTimer` (300ms) to avoid excessive re-re
 
 ### Theme system
 
-`EditorTheme` defines colors for: background, foreground, current line, line numbers, selection, and 8 syntax categories (keyword, type, string, comment, number, function, preprocessor, operator). Themes are applied to the `Editor` palette, line number area, and forwarded to `CodeHighlighter` which rebuilds its format rules.
+`EditorTheme` defines colors for: background, foreground, current line, line numbers, selection, and 8 syntax categories (keyword, type, string, comment, number, function, preprocessor, operator). Themes are applied to the `Editor` palette, line number area, minimap background, and forwarded to `CodeHighlighter` which rebuilds its format rules.
 
 ### Large file support
 

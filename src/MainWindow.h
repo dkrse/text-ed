@@ -2,10 +2,12 @@
 #include <QMainWindow>
 #include <QStringConverter>
 #include <QStringList>
+#include <QMap>
 #include "CodeHighlighter.h"
 #include "SettingsDialog.h"
 
 class Editor;
+class Minimap;
 class SshSession;
 class MarkdownPreview;
 class SearchBar;
@@ -14,6 +16,7 @@ class QTabWidget;
 class QLabel;
 class QAction;
 class QComboBox;
+class QTimer;
 
 struct TabData {
     QString filePath;
@@ -35,6 +38,8 @@ public:
 
 protected:
     void closeEvent(QCloseEvent *event) override;
+    void dragEnterEvent(QDragEnterEvent *event) override;
+    void dropEvent(QDropEvent *event) override;
 
 private slots:
     void newFile();
@@ -88,6 +93,9 @@ private:
     void onReplaceAll(const QString &findText, const QString &replaceWith, bool caseSensitive);
     void onSearchClosed();
     void updateSearchMatchLabel();
+    void autoSaveAll();
+    void updateAutoSaveTimer();
+    void updateMinimaps();
 
     QTabWidget *m_tabWidget;
     MarkdownPreview *m_preview;
@@ -103,6 +111,9 @@ private:
     QAction *m_previewAction;
 
     QTimer *m_previewTimer;
+    QTimer *m_autoSaveTimer = nullptr;
+
+    QMap<Editor*, Minimap*> m_minimaps;
 
     SshSession *m_sshSession = nullptr;
     QAction *m_sshDisconnectAction = nullptr;

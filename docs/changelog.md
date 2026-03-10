@@ -2,6 +2,18 @@
 
 All notable changes to TextEd are documented in this file.
 
+## [0.3.0] - 2026-03-10
+
+### Added
+
+- **Go to Line** (Ctrl+G) - jump to a specific line number via input dialog
+- **Auto-indent** - new lines preserve leading whitespace of the previous line, configurable in Settings
+- **Bracket matching** - highlights paired `()`, `{}`, `[]` in green when cursor is adjacent, configurable in Settings
+- **Drag & Drop** - open files by dragging them into the editor window
+- **Auto-save** - automatically saves modified files at a configurable interval (5-600 seconds), configurable in Settings
+- **Minimap** - VS Code-style code overview on the right side, renders each line as a 2px colored strip with visible area overlay, configurable in Settings
+- New settings: Auto Indent, Bracket Matching, Auto Save (with interval), Show Minimap
+
 ## [0.2.0] - 2026-03-10
 
 ### Added

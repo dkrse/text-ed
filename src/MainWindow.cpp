@@ -1,5 +1,6 @@
 #include "MainWindow.h"
 #include "Editor.h"
+#include "Minimap.h"
 #include "MarkdownPreview.h"
 #include "SearchBar.h"
 #include "LargeFileReader.h"
@@ -26,10 +27,15 @@
 #include <QTextBlock>
 #include <QStyle>
 #include <QVBoxLayout>
+#include <QHBoxLayout>
 #include <QShortcut>
 #include <QSettings>
 #include <QCloseEvent>
 #include <QMenu>
+#include <QInputDialog>
+#include <QMimeData>
+#include <QDragEnterEvent>
+#include <QDropEvent>
 
 MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
 {
@@ -74,6 +80,12 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
     setupMenus();
     setupStatusBar();
 
+    m_autoSaveTimer = new QTimer(this);
+    connect(m_autoSaveTimer, &QTimer::timeout, this, &MainWindow::autoSaveAll);
+    updateAutoSaveTimer();
+
+    setAcceptDrops(true);
+
     restoreSession();
     updateWindowTitle();
 }
@@ -106,6 +118,19 @@ void MainWindow::setupMenus()
     editMenu->addSeparator();
     editMenu->addAction(tr("&Find..."), QKeySequence::Find, this, [this]() { showSearchBar(false); });
     editMenu->addAction(tr("Find and &Replace..."), QKeySequence(Qt::CTRL | Qt::Key_H), this, [this]() { showSearchBar(true); });
+    editMenu->addAction(tr("&Go to Line..."), QKeySequence(Qt::CTRL | Qt::Key_G), this, [this]() {
+        auto *e = currentEditor();
+        if (!e) return;
+        bool ok;
+        int line = QInputDialog::getInt(this, tr("Go to Line"), tr("Line number:"),
+            e->textCursor().blockNumber() + 1, 1, e->document()->blockCount(), 1, &ok);
+        if (ok) {
+            QTextCursor c(e->document()->findBlockByNumber(line - 1));
+            e->setTextCursor(c);
+            e->centerCursor();
+            e->setFocus();
+        }
+    });
 
     auto *viewMenu = menuBar()->addMenu(tr("&View"));
     viewMenu->addAction(tr("Zoom &In"), QKeySequence(Qt::CTRL | Qt::Key_Plus), this, [this]() { if (auto *e = currentEditor()) e->zoomInEditor(); });
@@ -190,13 +215,27 @@ void MainWindow::populateLanguageCombo()
 
 int MainWindow::createTab(const QString &title)
 {
-    auto *editor = new Editor(this);
+    auto *container = new QWidget(this);
+    auto *hbox = new QHBoxLayout(container);
+    hbox->setContentsMargins(0, 0, 0, 0);
+    hbox->setSpacing(0);
+
+    auto *editor = new Editor(container);
     editor->applySettings(m_settings);
     editor->applyTheme(EditorTheme::themeByName(m_settings.themeName));
     connectEditor(editor);
 
+    auto *minimap = new Minimap(editor, container);
+    minimap->setVisible(m_settings.minimap);
+    minimap->setPalette(editor->palette());
+
+    hbox->addWidget(editor, 1);
+    hbox->addWidget(minimap);
+
+    m_minimaps.insert(editor, minimap);
+
     TabData td;
-    int index = m_tabWidget->addTab(editor, title.isEmpty() ? tr("Untitled") : title);
+    int index = m_tabWidget->addTab(container, title.isEmpty() ? tr("Untitled") : title);
     m_tabs.insert(index, td);
     m_tabWidget->setCurrentIndex(index);
     return index;
@@ -212,7 +251,12 @@ void MainWindow::connectEditor(Editor *editor)
 }
 
 void MainWindow::disconnectEditor(Editor *editor) { disconnect(editor, nullptr, this, nullptr); }
-Editor *MainWindow::currentEditor() const { return qobject_cast<Editor *>(m_tabWidget->currentWidget()); }
+Editor *MainWindow::currentEditor() const
+{
+    QWidget *w = m_tabWidget->currentWidget();
+    if (!w) return nullptr;
+    return w->findChild<Editor *>();
+}
 
 TabData *MainWindow::currentTabData()
 {
@@ -304,11 +348,15 @@ void MainWindow::closeTab(int index)
         } else if (r == QMessageBox::Cancel) return;
     }
 
-    auto *editor = qobject_cast<Editor *>(m_tabWidget->widget(index));
-    if (editor) disconnectEditor(editor);
+    QWidget *w = m_tabWidget->widget(index);
+    auto *editor = w ? w->findChild<Editor *>() : nullptr;
+    if (editor) {
+        m_minimaps.remove(editor);
+        disconnectEditor(editor);
+    }
     m_tabWidget->removeTab(index);
     m_tabs.remove(index);
-    if (editor) editor->deleteLater();
+    if (w) w->deleteLater();
     if (m_tabWidget->count() == 0) createTab();
 }
 
@@ -356,7 +404,8 @@ void MainWindow::onTabChanged(int index)
 
 void MainWindow::loadFileIntoTab(int index, const QString &path)
 {
-    auto *editor = qobject_cast<Editor *>(m_tabWidget->widget(index));
+    QWidget *w = m_tabWidget->widget(index);
+    auto *editor = w ? w->findChild<Editor *>() : nullptr;
     if (!editor || index >= m_tabs.size()) return;
 
     auto encoding = LargeFileReader::detectEncoding(path);
@@ -431,7 +480,8 @@ void MainWindow::reloadWithEncoding(QStringConverter::Encoding enc)
 
 void MainWindow::saveFileFromTab(int index, const QString &path)
 {
-    auto *editor = qobject_cast<Editor *>(m_tabWidget->widget(index));
+    QWidget *w = m_tabWidget->widget(index);
+    auto *editor = w ? w->findChild<Editor *>() : nullptr;
     if (!editor || index >= m_tabs.size()) return;
 
     QFile file(path);
@@ -504,14 +554,14 @@ void MainWindow::openSettings()
         // Apply theme
         const EditorTheme &theme = EditorTheme::themeByName(m_settings.themeName);
         for (int i = 0; i < m_tabWidget->count(); ++i) {
-            auto *editor = qobject_cast<Editor *>(m_tabWidget->widget(i));
+            auto *editor = m_tabWidget->widget(i)->findChild<Editor *>();
             if (editor) editor->applyTheme(theme);
         }
 
         // If highlighting toggled, re-apply or remove highlighters
         if (highlightChanged) {
             for (int i = 0; i < m_tabWidget->count(); ++i) {
-                auto *editor = qobject_cast<Editor *>(m_tabWidget->widget(i));
+                auto *editor = m_tabWidget->widget(i)->findChild<Editor *>();
                 auto *td = tabData(i);
                 if (!editor || !td) continue;
 
@@ -524,13 +574,15 @@ void MainWindow::openSettings()
         }
 
         m_fontSizeLabel->setText(QString("Font: %1pt").arg(m_settings.editorFont.pointSize()));
+        updateAutoSaveTimer();
+        updateMinimaps();
     }
 }
 
 void MainWindow::applySettingsToAllEditors()
 {
     for (int i = 0; i < m_tabWidget->count(); ++i) {
-        auto *editor = qobject_cast<Editor *>(m_tabWidget->widget(i));
+        auto *editor = m_tabWidget->widget(i)->findChild<Editor *>();
         if (editor) editor->applySettings(m_settings);
     }
 }
@@ -688,7 +740,7 @@ void MainWindow::sshOpenFile()
     else
         idx = createTab();
 
-    auto *editor = qobject_cast<Editor *>(m_tabWidget->widget(idx));
+    auto *editor = m_tabWidget->widget(idx)->findChild<Editor *>();
     if (!editor) return;
 
     auto &tab = m_tabs[idx];
@@ -835,6 +887,45 @@ void MainWindow::closeEvent(QCloseEvent *event)
     saveSession();
     saveRecentFiles();
     event->accept();
+}
+
+void MainWindow::dragEnterEvent(QDragEnterEvent *event)
+{
+    if (event->mimeData()->hasUrls())
+        event->acceptProposedAction();
+}
+
+void MainWindow::dropEvent(QDropEvent *event)
+{
+    for (const QUrl &url : event->mimeData()->urls()) {
+        if (url.isLocalFile())
+            openFile(url.toLocalFile());
+    }
+}
+
+void MainWindow::autoSaveAll()
+{
+    for (int i = 0; i < m_tabs.size(); ++i) {
+        if (m_tabs[i].modified && !m_tabs[i].filePath.isEmpty() && !m_tabs[i].isRemote) {
+            saveFileFromTab(i, m_tabs[i].filePath);
+        }
+    }
+}
+
+void MainWindow::updateAutoSaveTimer()
+{
+    if (m_settings.autoSave && m_settings.autoSaveInterval > 0) {
+        m_autoSaveTimer->start(m_settings.autoSaveInterval * 1000);
+    } else {
+        m_autoSaveTimer->stop();
+    }
+}
+
+void MainWindow::updateMinimaps()
+{
+    for (auto it = m_minimaps.begin(); it != m_minimaps.end(); ++it) {
+        it.value()->setVisible(m_settings.minimap);
+    }
 }
 
 void MainWindow::addToRecentFiles(const QString &path)
