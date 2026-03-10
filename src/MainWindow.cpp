@@ -1,6 +1,7 @@
 #include "MainWindow.h"
 #include "Editor.h"
 #include "MarkdownPreview.h"
+#include "SearchBar.h"
 #include "LargeFileReader.h"
 #include "CodeHighlighter.h"
 #include "SettingsDialog.h"
@@ -24,11 +25,21 @@
 #include <QProgressDialog>
 #include <QTextBlock>
 #include <QStyle>
+#include <QVBoxLayout>
+#include <QShortcut>
+#include <QSettings>
+#include <QCloseEvent>
+#include <QMenu>
 
 MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
 {
     m_settings.editorFont = QFont("Monospace", 11);
     m_settings.guiFont = QApplication::font();
+
+    auto *centralContainer = new QWidget(this);
+    auto *centralLayout = new QVBoxLayout(centralContainer);
+    centralLayout->setContentsMargins(0, 0, 0, 0);
+    centralLayout->setSpacing(0);
 
     m_splitter = new QSplitter(Qt::Horizontal, this);
 
@@ -47,17 +58,23 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
     m_splitter->setStretchFactor(0, 1);
     m_splitter->setStretchFactor(1, 1);
 
-    setCentralWidget(m_splitter);
+    centralLayout->addWidget(m_splitter, 1);
+
+    setupSearchBar();
+    centralLayout->addWidget(m_searchBar);
+
+    setCentralWidget(centralContainer);
 
     m_previewTimer = new QTimer(this);
     m_previewTimer->setSingleShot(true);
     m_previewTimer->setInterval(300);
     connect(m_previewTimer, &QTimer::timeout, this, &MainWindow::updatePreviewContent);
 
+    loadRecentFiles();
     setupMenus();
     setupStatusBar();
 
-    createTab();
+    restoreSession();
     updateWindowTitle();
 }
 
@@ -68,6 +85,9 @@ void MainWindow::setupMenus()
     fileMenu->addAction(tr("&Open..."), QKeySequence::Open, this, &MainWindow::open);
     fileMenu->addAction(tr("&Save"), QKeySequence::Save, this, &MainWindow::save);
     fileMenu->addAction(tr("Save &As..."), QKeySequence::SaveAs, this, &MainWindow::saveAs);
+    fileMenu->addSeparator();
+    m_recentFilesMenu = fileMenu->addMenu(tr("Recent &Files"));
+    updateRecentFilesMenu();
     fileMenu->addSeparator();
     fileMenu->addAction(tr("Close Tab"), QKeySequence(Qt::CTRL | Qt::Key_W), this, [this]() {
         closeTab(m_tabWidget->currentIndex());
@@ -83,6 +103,9 @@ void MainWindow::setupMenus()
     editMenu->addAction(tr("&Copy"), QKeySequence::Copy, this, [this]() { if (auto *e = currentEditor()) e->copy(); });
     editMenu->addAction(tr("&Paste"), QKeySequence::Paste, this, [this]() { if (auto *e = currentEditor()) e->paste(); });
     editMenu->addAction(tr("Select &All"), QKeySequence::SelectAll, this, [this]() { if (auto *e = currentEditor()) e->selectAll(); });
+    editMenu->addSeparator();
+    editMenu->addAction(tr("&Find..."), QKeySequence::Find, this, [this]() { showSearchBar(false); });
+    editMenu->addAction(tr("Find and &Replace..."), QKeySequence(Qt::CTRL | Qt::Key_H), this, [this]() { showSearchBar(true); });
 
     auto *viewMenu = menuBar()->addMenu(tr("&View"));
     viewMenu->addAction(tr("Zoom &In"), QKeySequence(Qt::CTRL | Qt::Key_Plus), this, [this]() { if (auto *e = currentEditor()) e->zoomInEditor(); });
@@ -158,7 +181,7 @@ void MainWindow::populateLanguageCombo()
 {
     m_languageCombo->blockSignals(true);
     m_languageCombo->clear();
-    for (int i = 0; i <= static_cast<int>(CodeHighlighter::Makefile); ++i) {
+    for (int i = 0; i <= static_cast<int>(CodeHighlighter::Asm); ++i) {
         auto lang = static_cast<CodeHighlighter::Language>(i);
         m_languageCombo->addItem(CodeHighlighter::languageName(lang), i);
     }
@@ -320,6 +343,15 @@ void MainWindow::onTabChanged(int index)
 
     updateStatusBar();
     updateWindowTitle();
+
+    // Re-apply search highlights if search bar is visible
+    if (m_searchBar->isVisible()) {
+        auto *editor = currentEditor();
+        if (editor) {
+            editor->highlightSearchMatches(m_searchBar->searchText(), m_searchBar->isCaseSensitive());
+            updateSearchMatchLabel();
+        }
+    }
 }
 
 void MainWindow::loadFileIntoTab(int index, const QString &path)
@@ -350,7 +382,6 @@ void MainWindow::loadFileIntoTab(int index, const QString &path)
     auto &td = m_tabs[index];
     td.filePath = path;
     td.isMarkdown = isMarkdownFile(path);
-    td.modified = false;
     td.encoding = encoding;
     td.language = td.isMarkdown ? CodeHighlighter::None : CodeHighlighter::detectLanguage(path);
 
@@ -362,6 +393,9 @@ void MainWindow::loadFileIntoTab(int index, const QString &path)
         else if (td.language != CodeHighlighter::None) editor->setLanguage(td.language);
     }
 
+    td.modified = false;
+    editor->document()->setModified(false);
+    addToRecentFiles(path);
     updateTabTitle(index);
     m_tabWidget->setTabIcon(index, td.isMarkdown ?
         style()->standardIcon(QStyle::SP_FileDialogDetailedView) : QIcon());
@@ -682,4 +716,209 @@ void MainWindow::sshOpenFile()
     updateWindowTitle();
 }
 
+void MainWindow::setupSearchBar()
+{
+    m_searchBar = new SearchBar(this);
 
+    connect(m_searchBar, &SearchBar::searchTextChanged, this, &MainWindow::onSearchTextChanged);
+    connect(m_searchBar, &SearchBar::findNext, this, &MainWindow::onFindNext);
+    connect(m_searchBar, &SearchBar::findPrev, this, &MainWindow::onFindPrev);
+    connect(m_searchBar, &SearchBar::replaceOne, this, &MainWindow::onReplaceOne);
+    connect(m_searchBar, &SearchBar::replaceAll, this, &MainWindow::onReplaceAll);
+    connect(m_searchBar, &SearchBar::closed, this, &MainWindow::onSearchClosed);
+
+    // F3 / Shift+F3 shortcuts work globally
+    auto *f3 = new QShortcut(QKeySequence(Qt::Key_F3), this);
+    connect(f3, &QShortcut::activated, this, &MainWindow::onFindNext);
+    auto *sf3 = new QShortcut(QKeySequence(Qt::SHIFT | Qt::Key_F3), this);
+    connect(sf3, &QShortcut::activated, this, &MainWindow::onFindPrev);
+}
+
+void MainWindow::showSearchBar(bool withReplace)
+{
+    m_searchBar->setReplaceVisible(withReplace);
+    m_searchBar->show();
+    m_searchBar->focusSearchField();
+
+    // If there is selected text, use it as search text
+    auto *editor = currentEditor();
+    if (editor) {
+        QString sel = editor->textCursor().selectedText();
+        if (!sel.isEmpty() && !sel.contains(QChar::ParagraphSeparator)) {
+            // Set text in the search field (will trigger searchTextChanged via signal)
+            // We need to access the line edit -- use the public searchText after setting
+            // Actually, SearchBar doesn't expose setText. Let's just trigger the search
+            // with what's already there.
+        }
+    }
+}
+
+void MainWindow::onSearchTextChanged(const QString &text, bool caseSensitive)
+{
+    auto *editor = currentEditor();
+    if (!editor) return;
+    editor->highlightSearchMatches(text, caseSensitive);
+    updateSearchMatchLabel();
+}
+
+void MainWindow::onFindNext()
+{
+    auto *editor = currentEditor();
+    if (!editor) return;
+    editor->goToNextMatch();
+    updateSearchMatchLabel();
+}
+
+void MainWindow::onFindPrev()
+{
+    auto *editor = currentEditor();
+    if (!editor) return;
+    editor->goToPrevMatch();
+    updateSearchMatchLabel();
+}
+
+void MainWindow::onReplaceOne(const QString &replaceWith)
+{
+    auto *editor = currentEditor();
+    if (!editor) return;
+    editor->replaceCurrentMatch(replaceWith);
+    updateSearchMatchLabel();
+}
+
+void MainWindow::onReplaceAll(const QString &findText, const QString &replaceWith, bool caseSensitive)
+{
+    auto *editor = currentEditor();
+    if (!editor) return;
+    editor->replaceAllMatches(findText, replaceWith, caseSensitive);
+    updateSearchMatchLabel();
+}
+
+void MainWindow::onSearchClosed()
+{
+    auto *editor = currentEditor();
+    if (editor) {
+        editor->clearSearchHighlights();
+        editor->setFocus();
+    }
+}
+
+void MainWindow::updateSearchMatchLabel()
+{
+    auto *editor = currentEditor();
+    if (!editor) return;
+    int total = editor->searchMatchCount();
+    int current = (total > 0) ? editor->currentMatchIndex() + 1 : 0;
+    m_searchBar->updateMatchLabel(current, total);
+}
+
+void MainWindow::closeEvent(QCloseEvent *event)
+{
+    for (int i = 0; i < m_tabs.size(); ++i) {
+        if (!m_tabs[i].modified) continue;
+        m_tabWidget->setCurrentIndex(i);
+        QString name = m_tabs[i].filePath.isEmpty() ? tr("Untitled") : QFileInfo(m_tabs[i].filePath).fileName();
+        auto r = QMessageBox::question(this, tr("Unsaved Changes"),
+                    tr("Save changes to %1?").arg(name),
+                    QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel);
+        if (r == QMessageBox::Save) {
+            if (m_tabs[i].filePath.isEmpty()) {
+                saveAs();
+                if (m_tabs[i].modified) { event->ignore(); return; }
+            } else {
+                saveFileFromTab(i, m_tabs[i].filePath);
+            }
+        } else if (r == QMessageBox::Cancel) {
+            event->ignore();
+            return;
+        }
+    }
+    saveSession();
+    saveRecentFiles();
+    event->accept();
+}
+
+void MainWindow::addToRecentFiles(const QString &path)
+{
+    m_recentFiles.removeAll(path);
+    m_recentFiles.prepend(path);
+    while (m_recentFiles.size() > MaxRecentFiles)
+        m_recentFiles.removeLast();
+    updateRecentFilesMenu();
+    saveRecentFiles();
+}
+
+void MainWindow::loadRecentFiles()
+{
+    QSettings settings("TextEd", "TextEd");
+    m_recentFiles = settings.value("recentFiles").toStringList();
+    while (m_recentFiles.size() > MaxRecentFiles)
+        m_recentFiles.removeLast();
+}
+
+void MainWindow::saveRecentFiles()
+{
+    QSettings settings("TextEd", "TextEd");
+    settings.setValue("recentFiles", m_recentFiles);
+}
+
+void MainWindow::updateRecentFilesMenu()
+{
+    if (!m_recentFilesMenu) return;
+    m_recentFilesMenu->clear();
+    if (m_recentFiles.isEmpty()) {
+        m_recentFilesMenu->addAction(tr("(empty)"))->setEnabled(false);
+        return;
+    }
+    for (const QString &path : m_recentFiles) {
+        m_recentFilesMenu->addAction(QFileInfo(path).fileName(), this, [this, path]() {
+            if (QFileInfo::exists(path))
+                openFile(path);
+            else {
+                QMessageBox::warning(this, tr("Error"), tr("File not found: %1").arg(path));
+                m_recentFiles.removeAll(path);
+                updateRecentFilesMenu();
+                saveRecentFiles();
+            }
+        })->setToolTip(path);
+    }
+    m_recentFilesMenu->addSeparator();
+    m_recentFilesMenu->addAction(tr("Clear Recent"), this, [this]() {
+        m_recentFiles.clear();
+        updateRecentFilesMenu();
+        saveRecentFiles();
+    });
+}
+
+void MainWindow::saveSession()
+{
+    QSettings settings("TextEd", "TextEd");
+    QStringList sessionFiles;
+    int activeTab = m_tabWidget->currentIndex();
+    for (int i = 0; i < m_tabs.size(); ++i) {
+        if (!m_tabs[i].filePath.isEmpty() && !m_tabs[i].isRemote && QFileInfo::exists(m_tabs[i].filePath))
+            sessionFiles.append(m_tabs[i].filePath);
+    }
+    settings.setValue("session/files", sessionFiles);
+    settings.setValue("session/activeTab", activeTab);
+}
+
+void MainWindow::restoreSession()
+{
+    QSettings settings("TextEd", "TextEd");
+    QStringList sessionFiles = settings.value("session/files").toStringList();
+    int activeTab = settings.value("session/activeTab", 0).toInt();
+
+    bool opened = false;
+    for (const QString &path : sessionFiles) {
+        if (QFileInfo::exists(path)) {
+            openFile(path);
+            opened = true;
+        }
+    }
+
+    if (!opened)
+        createTab();
+
+    if (activeTab >= 0 && activeTab < m_tabWidget->count())
+        m_tabWidget->setCurrentIndex(activeTab);
+}

@@ -75,9 +75,11 @@ void CodeHighlighter::buildRules()
     case Lua: addLuaRules(); break;
     case Json: addJsonRules(); break;
     case Yaml: case Toml: case Ini: addYamlRules(); break;
-    case CMake: case Makefile: addCMakeRules(); break;
+    case CMake: addCMakeRules(); break;
+    case Makefile: addMakefileRules(); break;
     case PHP: addJavaScriptRules(); break;
     case Haskell: case Swift: addGenericRules(); break;
+    case Asm: addAsmRules(); break;
     case None: break;
     }
 }
@@ -468,6 +470,94 @@ void CodeHighlighter::addCMakeRules()
     m_rules.append({QRegularExpression(QStringLiteral("#[^\n]*")), m_commentFmt});
 }
 
+void CodeHighlighter::addMakefileRules()
+{
+    // Keywords
+    QStringList keywords = {
+        "include","define","endef","ifdef","ifndef","ifeq","ifneq","else","endif",
+        "override","export","unexport","vpath"
+    };
+    m_rules.append({QRegularExpression("\\b(" + keywords.join('|') + ")\\b"), m_keywordFmt});
+
+    // Special targets
+    QStringList specialTargets = {
+        "\\.PHONY","\\.SUFFIXES","\\.DEFAULT","\\.PRECIOUS","\\.SECONDARY"
+    };
+    m_rules.append({QRegularExpression("(" + specialTargets.join('|') + ")\\b"), m_keywordFmt});
+
+    // Variables $(VAR) and ${VAR}
+    m_rules.append({QRegularExpression(QStringLiteral("\\$\\([^)]+\\)")), m_preprocessorFmt});
+    m_rules.append({QRegularExpression(QStringLiteral("\\$\\{[^}]+\\}")), m_preprocessorFmt});
+
+    // Special variables $@, $<, $^, $?, $*, $%, $+
+    m_rules.append({QRegularExpression(QStringLiteral("\\$[@<\\^\\?\\*%\\+]")), m_preprocessorFmt});
+
+    // Targets: word: at start of line
+    m_rules.append({QRegularExpression(QStringLiteral("^[a-zA-Z_][a-zA-Z0-9_.-]*(?=\\s*:)"), QRegularExpression::MultilineOption), m_functionFmt});
+
+    // Strings
+    m_rules.append({QRegularExpression(QStringLiteral("\"([^\"\\\\]|\\\\.)*\"")), m_stringFmt});
+    m_rules.append({QRegularExpression(QStringLiteral("'([^'\\\\]|\\\\.)*'")), m_stringFmt});
+
+    // Numbers
+    m_rules.append({QRegularExpression(QStringLiteral("\\b\\d+\\.?\\d*\\b")), m_numberFmt});
+
+    // Comments
+    m_rules.append({QRegularExpression(QStringLiteral("#[^\n]*")), m_commentFmt});
+}
+
+void CodeHighlighter::addAsmRules()
+{
+    // Directives / keywords
+    QStringList keywords = {
+        "section","segment","global","extern","bits","org","default","equ",
+        "db","dw","dd","dq","resb","resw","resd","resq","times","incbin",
+        "include","struc","endstruc","macro","endmacro","rep","movs","stos",
+        "lods","cmps","scas"
+    };
+    m_rules.append({QRegularExpression("\\b(" + keywords.join('|') + ")\\b", QRegularExpression::CaseInsensitiveOption), m_keywordFmt});
+
+    // x86 instructions
+    QStringList instructions = {
+        "mov","push","pop","call","ret","jmp","je","jne","jz","jnz","jg","jge",
+        "jl","jle","ja","jae","jb","jbe","cmp","test","add","sub","mul","imul",
+        "div","idiv","inc","dec","and","or","xor","not","shl","shr","sar","sal",
+        "rol","ror","lea","nop","int","syscall","hlt","clc","stc","cld","std",
+        "loop","loope","loopne","enter","leave"
+    };
+    m_rules.append({QRegularExpression("\\b(" + instructions.join('|') + ")\\b", QRegularExpression::CaseInsensitiveOption), m_keywordFmt});
+
+    // Registers
+    QStringList registers = {
+        "eax","ebx","ecx","edx","esi","edi","esp","ebp",
+        "rax","rbx","rcx","rdx","rsi","rdi","rsp","rbp",
+        "r8","r9","r10","r11","r12","r13","r14","r15",
+        "al","ah","bl","bh","cl","ch","dl","dh",
+        "ax","bx","cx","dx","si","di","sp","bp",
+        "cs","ds","es","fs","gs","ss",
+        "xmm0","xmm1","xmm2","xmm3","xmm4","xmm5","xmm6","xmm7",
+        "xmm8","xmm9","xmm10","xmm11","xmm12","xmm13","xmm14","xmm15",
+        "ymm0","ymm1","ymm2","ymm3","ymm4","ymm5","ymm6","ymm7"
+    };
+    m_rules.append({QRegularExpression("\\b(" + registers.join('|') + ")\\b", QRegularExpression::CaseInsensitiveOption), m_typeFmt});
+
+    // Numbers: hex 0x, binary 0b, octal 0, decimal, h-suffix hex
+    m_rules.append({QRegularExpression(QStringLiteral("\\b(0[xX][0-9a-fA-F]+|0[bB][01]+|0[0-7]+|[0-9][0-9a-fA-F]*[hH]|\\d+)\\b")), m_numberFmt});
+
+    // Strings
+    m_rules.append({QRegularExpression(QStringLiteral("\"([^\"\\\\]|\\\\.)*\"")), m_stringFmt});
+    m_rules.append({QRegularExpression(QStringLiteral("'([^'\\\\]|\\\\.)*'")), m_stringFmt});
+
+    // Labels: identifier at start of line followed by :
+    m_rules.append({QRegularExpression(QStringLiteral("^[a-zA-Z_][a-zA-Z0-9_]*:"), QRegularExpression::MultilineOption), m_functionFmt});
+
+    // Preprocessor: lines starting with %
+    m_rules.append({QRegularExpression(QStringLiteral("^\\s*%[a-zA-Z_]+[^\n]*"), QRegularExpression::MultilineOption), m_preprocessorFmt});
+
+    // Comments: ; to end of line
+    m_rules.append({QRegularExpression(QStringLiteral(";[^\n]*")), m_commentFmt});
+}
+
 void CodeHighlighter::addGenericRules()
 {
     m_rules.append({QRegularExpression(QStringLiteral("\\b\\d+\\.?\\d*([eE][+-]?\\d+)?\\b")), m_numberFmt});
@@ -572,6 +662,8 @@ CodeHighlighter::Language CodeHighlighter::detectLanguage(const QString &filePat
     if (ext == "ini" || ext == "cfg" || ext == "conf") return Ini;
     if (base == "cmakelists.txt" || ext == "cmake") return CMake;
     if (base == "makefile" || base == "gnumakefile" || ext == "mk") return Makefile;
+    if (ext == "asm" || ext == "s" || ext == "nasm" || ext == "yasm") return Asm;
+    if (QFileInfo(filePath).suffix() == "S") return Asm;
     if (base == "dockerfile") return Shell;
     if (base == ".bashrc" || base == ".zshrc" || base == ".profile") return Shell;
 
@@ -608,6 +700,7 @@ QString CodeHighlighter::languageName(Language lang)
     case Ini: return "INI";
     case CMake: return "CMake";
     case Makefile: return "Makefile";
+    case Asm: return "Assembly";
     }
     return "Plain Text";
 }

@@ -9,9 +9,42 @@
 #include <QScrollBar>
 #include <QTextOption>
 
+// --- ScrollBarOverlay ---
+
+ScrollBarOverlay::ScrollBarOverlay(QWidget *parent)
+    : QWidget(parent)
+{
+    setAttribute(Qt::WA_TransparentForMouseEvents);
+    setAttribute(Qt::WA_TranslucentBackground);
+}
+
+void ScrollBarOverlay::setMarkerPositions(const QVector<qreal> &positions)
+{
+    m_positions = positions;
+    update();
+}
+
+void ScrollBarOverlay::paintEvent(QPaintEvent *)
+{
+    if (m_positions.isEmpty()) return;
+    QPainter p(this);
+    p.setRenderHint(QPainter::Antialiasing, false);
+    p.setPen(Qt::NoPen);
+    p.setBrush(QColor("#FF8C00")); // orange markers
+    const int h = height();
+    const int w = width();
+    for (qreal pos : m_positions) {
+        int y = qBound(0, static_cast<int>(pos * h), h - 2);
+        p.drawRect(0, y, w, 2);
+    }
+}
+
+// --- Editor ---
+
 Editor::Editor(QWidget *parent) : QPlainTextEdit(parent)
 {
     m_lineNumberArea = new LineNumberArea(this);
+    m_scrollBarOverlay = new ScrollBarOverlay(this);
 
     connect(this, &QPlainTextEdit::blockCountChanged, this, &Editor::updateLineNumberAreaWidth);
     connect(this, &QPlainTextEdit::updateRequest, this, &Editor::updateLineNumberArea);
@@ -175,11 +208,19 @@ void Editor::resizeEvent(QResizeEvent *event)
     QPlainTextEdit::resizeEvent(event);
     QRect cr = contentsRect();
     m_lineNumberArea->setGeometry(cr.left(), cr.top(), lineNumberAreaWidth(), cr.height());
+    updateScrollBarOverlay();
 }
 
 void Editor::highlightCurrentLine()
 {
+    updateAllSelections();
+}
+
+void Editor::updateAllSelections()
+{
     QList<QTextEdit::ExtraSelection> selections;
+
+    // Current line highlight
     if (!isReadOnly() && m_highlightCurrentLine) {
         QTextEdit::ExtraSelection sel;
         sel.format.setBackground(m_currentLineColor);
@@ -188,7 +229,177 @@ void Editor::highlightCurrentLine()
         sel.cursor.clearSelection();
         selections.append(sel);
     }
+
+    // Search highlights
+    for (int i = 0; i < m_searchSelections.size(); ++i) {
+        QTextEdit::ExtraSelection sel = m_searchSelections[i];
+        if (i == m_currentMatch) {
+            sel.format.setBackground(QColor("#FF8C00")); // orange for current
+        }
+        selections.append(sel);
+    }
+
     setExtraSelections(selections);
+}
+
+void Editor::highlightSearchMatches(const QString &text, bool caseSensitive)
+{
+    m_searchSelections.clear();
+    m_searchText = text;
+    m_searchCaseSensitive = caseSensitive;
+    m_currentMatch = -1;
+
+    if (text.isEmpty()) {
+        updateAllSelections();
+        updateScrollBarOverlay();
+        emit searchStateChanged();
+        return;
+    }
+
+    QTextDocument::FindFlags flags;
+    if (caseSensitive) flags |= QTextDocument::FindCaseSensitively;
+
+    QTextCursor cursor(document());
+    QTextCharFormat fmt;
+    fmt.setBackground(QColor("#FFFF00")); // yellow
+
+    constexpr int maxResults = 10000;
+    while (true) {
+        cursor = document()->find(text, cursor, flags);
+        if (cursor.isNull()) break;
+        QTextEdit::ExtraSelection sel;
+        sel.cursor = cursor;
+        sel.format = fmt;
+        m_searchSelections.append(sel);
+        if (m_searchSelections.size() >= maxResults) break;
+    }
+
+    // Set current match to the one at or after the cursor
+    if (!m_searchSelections.isEmpty()) {
+        int cursorPos = textCursor().position();
+        m_currentMatch = 0;
+        for (int i = 0; i < m_searchSelections.size(); ++i) {
+            if (m_searchSelections[i].cursor.selectionStart() >= cursorPos) {
+                m_currentMatch = i;
+                break;
+            }
+        }
+    }
+
+    updateAllSelections();
+    updateScrollBarOverlay();
+    emit searchStateChanged();
+}
+
+void Editor::clearSearchHighlights()
+{
+    m_searchSelections.clear();
+    m_searchText.clear();
+    m_currentMatch = -1;
+    updateAllSelections();
+    updateScrollBarOverlay();
+    emit searchStateChanged();
+}
+
+void Editor::goToNextMatch()
+{
+    if (m_searchSelections.isEmpty()) return;
+    m_currentMatch = (m_currentMatch + 1) % m_searchSelections.size();
+    QTextCursor c = m_searchSelections[m_currentMatch].cursor;
+    setTextCursor(c);
+    ensureCursorVisible();
+    updateAllSelections();
+    emit searchStateChanged();
+}
+
+void Editor::goToPrevMatch()
+{
+    if (m_searchSelections.isEmpty()) return;
+    m_currentMatch--;
+    if (m_currentMatch < 0) m_currentMatch = m_searchSelections.size() - 1;
+    QTextCursor c = m_searchSelections[m_currentMatch].cursor;
+    setTextCursor(c);
+    ensureCursorVisible();
+    updateAllSelections();
+    emit searchStateChanged();
+}
+
+void Editor::replaceCurrentMatch(const QString &replaceWith)
+{
+    if (m_currentMatch < 0 || m_currentMatch >= m_searchSelections.size()) return;
+
+    QTextCursor c = m_searchSelections[m_currentMatch].cursor;
+    c.beginEditBlock();
+    c.removeSelectedText();
+    c.insertText(replaceWith);
+    c.endEditBlock();
+
+    // Re-search to update matches
+    highlightSearchMatches(m_searchText, m_searchCaseSensitive);
+
+    // Adjust current match index
+    if (!m_searchSelections.isEmpty()) {
+        if (m_currentMatch >= m_searchSelections.size())
+            m_currentMatch = 0;
+        QTextCursor nc = m_searchSelections[m_currentMatch].cursor;
+        setTextCursor(nc);
+        ensureCursorVisible();
+    }
+    updateAllSelections();
+    emit searchStateChanged();
+}
+
+int Editor::replaceAllMatches(const QString &findText, const QString &replaceWith, bool caseSensitive)
+{
+    if (findText.isEmpty()) return 0;
+
+    QTextDocument::FindFlags flags;
+    if (caseSensitive) flags |= QTextDocument::FindCaseSensitively;
+
+    QTextCursor cursor(document());
+    cursor.beginEditBlock();
+    int count = 0;
+
+    while (true) {
+        cursor = document()->find(findText, cursor, flags);
+        if (cursor.isNull()) break;
+        cursor.removeSelectedText();
+        cursor.insertText(replaceWith);
+        ++count;
+    }
+
+    cursor.endEditBlock();
+
+    // Re-search (will find nothing if all replaced)
+    highlightSearchMatches(m_searchText, m_searchCaseSensitive);
+    return count;
+}
+
+QVector<qreal> Editor::getMatchPositions() const
+{
+    QVector<qreal> positions;
+    int total = document()->blockCount();
+    if (total == 0) return positions;
+
+    for (const auto &sel : m_searchSelections) {
+        int block = sel.cursor.block().blockNumber();
+        positions.append(static_cast<qreal>(block) / total);
+    }
+    return positions;
+}
+
+void Editor::updateScrollBarOverlay()
+{
+    QScrollBar *sb = verticalScrollBar();
+    if (!sb || !sb->isVisible()) {
+        m_scrollBarOverlay->hide();
+        return;
+    }
+    m_scrollBarOverlay->show();
+    m_scrollBarOverlay->setGeometry(
+        width() - sb->width(), 0, sb->width(), height());
+    m_scrollBarOverlay->setMarkerPositions(getMatchPositions());
+    m_scrollBarOverlay->raise();
 }
 
 void Editor::lineNumberAreaPaintEvent(QPaintEvent *event)

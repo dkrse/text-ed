@@ -32,6 +32,8 @@ add_executable(text-ed
     src/RemoteFileBrowser.h
     src/LargeFileReader.cpp
     src/LargeFileReader.h
+    src/SearchBar.cpp
+    src/SearchBar.h
     resources.qrc
 )
 

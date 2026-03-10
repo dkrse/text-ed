@@ -7,6 +7,18 @@ class MarkdownHighlighter;
 struct AppSettings;
 struct EditorTheme;
 
+class ScrollBarOverlay : public QWidget
+{
+    Q_OBJECT
+public:
+    explicit ScrollBarOverlay(QWidget *parent = nullptr);
+    void setMarkerPositions(const QVector<qreal> &positions);
+protected:
+    void paintEvent(QPaintEvent *event) override;
+private:
+    QVector<qreal> m_positions;
+};
+
 class Editor : public QPlainTextEdit
 {
     Q_OBJECT
@@ -39,8 +51,20 @@ public:
     int lineNumberAreaWidth() const;
     void lineNumberAreaPaintEvent(QPaintEvent *event);
 
+    // Search support
+    void highlightSearchMatches(const QString &text, bool caseSensitive);
+    void clearSearchHighlights();
+    int searchMatchCount() const { return m_searchSelections.size(); }
+    int currentMatchIndex() const { return m_currentMatch; }
+    void goToNextMatch();
+    void goToPrevMatch();
+    void replaceCurrentMatch(const QString &replaceWith);
+    int replaceAllMatches(const QString &findText, const QString &replaceWith, bool caseSensitive);
+    QVector<qreal> getMatchPositions() const;
+
 signals:
     void fontSizeChanged(int pointSize);
+    void searchStateChanged();
 
 protected:
     void resizeEvent(QResizeEvent *event) override;
@@ -52,6 +76,9 @@ private slots:
     void highlightCurrentLine();
 
 private:
+    void updateAllSelections();
+    void updateScrollBarOverlay();
+
     QWidget *m_lineNumberArea;
     MarkdownHighlighter *m_mdHighlighter = nullptr;
     CodeHighlighter *m_codeHighlighter = nullptr;
@@ -61,6 +88,13 @@ private:
     QColor m_currentLineColor = QColor("#e8f0fe");
     QColor m_lineNumberBg = QColor("#f0f0f0");
     QColor m_lineNumberFg = QColor("#999999");
+
+    // Search state
+    QList<QTextEdit::ExtraSelection> m_searchSelections;
+    QString m_searchText;
+    int m_currentMatch = -1;
+    bool m_searchCaseSensitive = false;
+    ScrollBarOverlay *m_scrollBarOverlay;
 };
 
 class LineNumberArea : public QWidget

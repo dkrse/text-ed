@@ -1,17 +1,21 @@
 # TextEd
 
-A fast, feature-rich text editor built with Qt 6 and C++17. Designed for efficient editing of text files, with strong Markdown support, syntax highlighting for 27 programming languages, SSH remote editing, and a fully offline architecture.
+A fast, feature-rich text editor built with Qt 6 and C++17. Designed for efficient editing of text files, with strong Markdown support, syntax highlighting for 28 programming languages, SSH remote editing, and a fully offline architecture.
 
 ## Features
 
 - **Fast file handling** - chunked reading with progress indicator for large files (4 MB chunks)
 - **Tab-based interface** - multi-document editing with per-tab state
+- **Session restore** - remembers open files and restores them on next launch
+- **Recent files** - quick access to last 5 opened files (File > Recent Files)
+- **Find & Replace** - Ctrl+F / Ctrl+H with yellow match highlighting, scrollbar markers, match count, case-sensitive toggle
+- **Undo / Redo** - full undo/redo support (Ctrl+Z / Ctrl+Shift+Z)
 - **Markdown support** - syntax highlighting in the editor and live HTML preview (Ctrl+Shift+P)
 - **LaTeX math rendering** - inline `$...$` and display `$$...$$` formulas via bundled KaTeX
 - **Mermaid diagrams** - rendered in the preview panel via bundled Mermaid.js
 - **Code block highlighting** - syntax-highlighted code blocks in preview via bundled highlight.js
 - **PDF export** - export the Markdown preview to PDF (View > Export Preview to PDF)
-- **Syntax highlighting** - 27 languages including C/C++, Python, JavaScript, Rust, Go, Java, and more
+- **Syntax highlighting** - 28 languages including C/C++, Python, JavaScript, Rust, Go, Java, Assembly, and more
 - **Character encoding** - UTF-8, UTF-16 BE/LE, UTF-32 BE/LE, Latin-1, System; auto-detection via BOM
 - **Color themes** - 12 built-in themes (Default Light, Solarized Light, Monokai, Dracula, One Dark, Nord, Gruvbox Dark/Light, Tomorrow Night, GitHub Dark, Catppuccin Mocha/Latte)
 - **SSH remote editing** - connect to remote servers via SSH/SFTP, browse and edit files
@@ -46,7 +50,7 @@ The resulting binary is `build/text-ed`.
 ## Usage
 
 ```bash
-./text-ed                    # open with empty tab
+./text-ed                    # open with empty tab (or restores previous session)
 ./text-ed file.txt           # open a file
 ./text-ed file1.md file2.py  # open multiple files
 ```
@@ -60,6 +64,12 @@ The resulting binary is `build/text-ed`.
 | Ctrl+S | Save |
 | Ctrl+Shift+S | Save As |
 | Ctrl+W | Close tab |
+| Ctrl+Z | Undo |
+| Ctrl+Shift+Z | Redo |
+| Ctrl+F | Find |
+| Ctrl+H | Find and Replace |
+| F3 | Find next |
+| Shift+F3 | Find previous |
 | Ctrl+Shift+P | Toggle Markdown preview |
 | Ctrl+Plus | Zoom in |
 | Ctrl+Minus | Zoom out |

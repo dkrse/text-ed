@@ -10,7 +10,7 @@ public:
     enum Language {
         None, Cpp, Python, JavaScript, Java, Rust, Go, Shell, SQL,
         HTML, CSS, Ruby, PHP, Lua, Perl, Haskell, Kotlin, Swift,
-        TypeScript, CSharp, Xml, Json, Yaml, Toml, Ini, CMake, Makefile
+        TypeScript, CSharp, Xml, Json, Yaml, Toml, Ini, CMake, Makefile, Asm
     };
 
     explicit CodeHighlighter(QTextDocument *parent = nullptr);
@@ -51,6 +51,8 @@ private:
     void addJsonRules();
     void addYamlRules();
     void addCMakeRules();
+    void addMakefileRules();
+    void addAsmRules();
 
     Language m_language = None;
     QVector<Rule> m_rules;

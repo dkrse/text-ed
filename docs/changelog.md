@@ -2,6 +2,35 @@
 
 All notable changes to TextEd are documented in this file.
 
+## [0.2.0] - 2026-03-10
+
+### Added
+
+- **Find & Replace** (Ctrl+F / Ctrl+H) with:
+  - Yellow highlighting of all search matches, orange for current match
+  - Match count display ("3 of 15")
+  - Navigation with F3 (next) and Shift+F3 (previous)
+  - Case-sensitive toggle
+  - Replace and Replace All functionality
+  - Orange markers on the vertical scrollbar showing match positions
+- **Assembly language syntax highlighting** for `.asm`, `.s`, `.S`, `.nasm`, `.yasm` files with x86 instructions, registers, directives, labels, NASM preprocessor
+- **Dedicated Makefile syntax highlighting** with variables `$(VAR)`/`${VAR}`, automatic variables (`$@`, `$<`, `$^`...), targets, special targets (.PHONY etc.)
+- **Session restore** - open files are remembered and automatically re-opened on next launch
+- **Recent files** menu (File > Recent Files) with last 5 opened files, persisted across sessions
+- **Unsaved changes dialog** when closing the application window (Save / Discard / Cancel for each modified tab)
+
+### Fixed
+
+- Fixed file marked as modified immediately after opening (caused by `setPlainText()` triggering `textChanged` signal before `modified` flag was reset)
+- Fixed orange search markers appearing as horizontal lines extending into text area when vertical scrollbar is not visible (short files)
+
+### Improved
+
+- Increased SSH directory listing buffer from 512 to 4096 bytes (prevents issues with long filenames)
+- Added 512 MB file size limit for remote file reads (prevents out-of-memory crashes)
+- Added 10,000 result cap for search highlighting (prevents UI lag on large files)
+- Language count increased from 27 to 28 (added Assembly)
+
 ## [0.1.0] - 2026-03-09
 
 ### Added

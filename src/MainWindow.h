@@ -1,12 +1,14 @@
 #pragma once
 #include <QMainWindow>
 #include <QStringConverter>
+#include <QStringList>
 #include "CodeHighlighter.h"
 #include "SettingsDialog.h"
 
 class Editor;
 class SshSession;
 class MarkdownPreview;
+class SearchBar;
 class QSplitter;
 class QTabWidget;
 class QLabel;
@@ -30,6 +32,9 @@ class MainWindow : public QMainWindow
 public:
     explicit MainWindow(QWidget *parent = nullptr);
     void openFile(const QString &path);
+
+protected:
+    void closeEvent(QCloseEvent *event) override;
 
 private slots:
     void newFile();
@@ -68,6 +73,21 @@ private:
     static bool isMarkdownFile(const QString &path);
     void populateEncodingCombo();
     void populateLanguageCombo();
+    void setupSearchBar();
+    void addToRecentFiles(const QString &path);
+    void loadRecentFiles();
+    void saveRecentFiles();
+    void updateRecentFilesMenu();
+    void saveSession();
+    void restoreSession();
+    void showSearchBar(bool withReplace);
+    void onSearchTextChanged(const QString &text, bool caseSensitive);
+    void onFindNext();
+    void onFindPrev();
+    void onReplaceOne(const QString &replaceWith);
+    void onReplaceAll(const QString &findText, const QString &replaceWith, bool caseSensitive);
+    void onSearchClosed();
+    void updateSearchMatchLabel();
 
     QTabWidget *m_tabWidget;
     MarkdownPreview *m_preview;
@@ -88,4 +108,10 @@ private:
     QAction *m_sshDisconnectAction = nullptr;
     QAction *m_sshOpenAction = nullptr;
     QLabel *m_sshLabel = nullptr;
+
+    SearchBar *m_searchBar = nullptr;
+
+    QStringList m_recentFiles;
+    QMenu *m_recentFilesMenu = nullptr;
+    static constexpr int MaxRecentFiles = 5;
 };

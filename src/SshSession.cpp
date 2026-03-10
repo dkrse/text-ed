@@ -200,7 +200,7 @@ QList<RemoteFileEntry> SshSession::listDir(const QString &remotePath, QString *e
         return entries;
     }
 
-    char buf[512];
+    char buf[4096];
     LIBSSH2_SFTP_ATTRIBUTES attrs;
     while (libssh2_sftp_readdir(dir, buf, sizeof(buf), &attrs) > 0) {
         QString name = QString::fromUtf8(buf);
@@ -248,8 +248,14 @@ QByteArray SshSession::readFile(const QString &remotePath, QString *errorMsg)
     QByteArray data;
     char buf[32768];
     ssize_t n;
+    constexpr qint64 maxFileSize = 512 * 1024 * 1024; // 512 MB limit
     while ((n = libssh2_sftp_read(file, buf, sizeof(buf))) > 0) {
         data.append(buf, static_cast<int>(n));
+        if (data.size() > maxFileSize) {
+            if (errorMsg) *errorMsg = "File too large (>512 MB)";
+            libssh2_sftp_close(file);
+            return {};
+        }
     }
 
     if (n < 0) {
