@@ -41,6 +41,8 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
 {
     m_settings.editorFont = QFont("Monospace", 11);
     m_settings.guiFont = QApplication::font();
+    loadSettings();
+    QApplication::setFont(m_settings.guiFont);
 
     auto *centralContainer = new QWidget(this);
     auto *centralLayout = new QVBoxLayout(centralContainer);
@@ -87,6 +89,7 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
     setAcceptDrops(true);
 
     restoreSession();
+    applyThemeToApp(EditorTheme::themeByName(m_settings.themeName));
     updateWindowTitle();
 }
 
@@ -442,6 +445,9 @@ void MainWindow::loadFileIntoTab(int index, const QString &path)
         else if (td.language != CodeHighlighter::None) editor->setLanguage(td.language);
     }
 
+    // Re-apply theme so newly created highlighter gets themed colors
+    editor->applyTheme(EditorTheme::themeByName(m_settings.themeName));
+
     td.modified = false;
     editor->document()->setModified(false);
     addToRecentFiles(path);
@@ -473,6 +479,8 @@ void MainWindow::reloadWithEncoding(QStringConverter::Encoding enc)
         if (td->isMarkdown) editor->setMarkdownMode(true);
         else if (td->language != CodeHighlighter::None) editor->setLanguage(td->language);
     }
+
+    editor->applyTheme(EditorTheme::themeByName(m_settings.themeName));
 
     td->modified = false;
     updateTabTitle(m_tabWidget->currentIndex());
@@ -514,6 +522,7 @@ void MainWindow::saveFileFromTab(int index, const QString &path)
             if (td.isMarkdown) editor->setMarkdownMode(true);
             else if (td.language != CodeHighlighter::None) editor->setLanguage(td.language);
         }
+        editor->applyTheme(EditorTheme::themeByName(m_settings.themeName));
         m_tabWidget->setTabIcon(index, td.isMarkdown ?
             style()->standardIcon(QStyle::SP_FileDialogDetailedView) : QIcon());
     }
@@ -551,13 +560,6 @@ void MainWindow::openSettings()
         // Apply to all editors
         applySettingsToAllEditors();
 
-        // Apply theme
-        const EditorTheme &theme = EditorTheme::themeByName(m_settings.themeName);
-        for (int i = 0; i < m_tabWidget->count(); ++i) {
-            auto *editor = m_tabWidget->widget(i)->findChild<Editor *>();
-            if (editor) editor->applyTheme(theme);
-        }
-
         // If highlighting toggled, re-apply or remove highlighters
         if (highlightChanged) {
             for (int i = 0; i < m_tabWidget->count(); ++i) {
@@ -573,9 +575,13 @@ void MainWindow::openSettings()
             }
         }
 
+        // Apply theme (must be after highlighters are set up)
+        applyThemeToApp(EditorTheme::themeByName(m_settings.themeName));
+
         m_fontSizeLabel->setText(QString("Font: %1pt").arg(m_settings.editorFont.pointSize()));
         updateAutoSaveTimer();
         updateMinimaps();
+        saveSettings();
     }
 }
 
@@ -584,6 +590,41 @@ void MainWindow::applySettingsToAllEditors()
     for (int i = 0; i < m_tabWidget->count(); ++i) {
         auto *editor = m_tabWidget->widget(i)->findChild<Editor *>();
         if (editor) editor->applySettings(m_settings);
+    }
+}
+
+void MainWindow::applyThemeToApp(const EditorTheme &theme)
+{
+    // Apply theme to all editors and their highlighters
+    for (int i = 0; i < m_tabWidget->count(); ++i) {
+        auto *editor = m_tabWidget->widget(i)->findChild<Editor *>();
+        if (editor) editor->applyTheme(theme);
+    }
+
+    // Determine if dark theme based on background luminance
+    bool isDark = theme.background.lightnessF() < 0.5;
+
+    if (isDark) {
+        QPalette darkPalette;
+        darkPalette.setColor(QPalette::Window, theme.lineNumberBg);
+        darkPalette.setColor(QPalette::WindowText, theme.foreground);
+        darkPalette.setColor(QPalette::Base, theme.background);
+        darkPalette.setColor(QPalette::AlternateBase, theme.lineNumberBg);
+        darkPalette.setColor(QPalette::Text, theme.foreground);
+        darkPalette.setColor(QPalette::Button, theme.lineNumberBg);
+        darkPalette.setColor(QPalette::ButtonText, theme.foreground);
+        darkPalette.setColor(QPalette::BrightText, Qt::white);
+        darkPalette.setColor(QPalette::Highlight, theme.selection);
+        darkPalette.setColor(QPalette::HighlightedText, theme.foreground);
+        darkPalette.setColor(QPalette::ToolTipBase, theme.lineNumberBg);
+        darkPalette.setColor(QPalette::ToolTipText, theme.foreground);
+        darkPalette.setColor(QPalette::Link, theme.keyword);
+        darkPalette.setColor(QPalette::Disabled, QPalette::Text, theme.lineNumberFg);
+        darkPalette.setColor(QPalette::Disabled, QPalette::ButtonText, theme.lineNumberFg);
+        darkPalette.setColor(QPalette::Mid, theme.lineNumberBg);
+        QApplication::setPalette(darkPalette);
+    } else {
+        QApplication::setPalette(QApplication::style()->standardPalette());
     }
 }
 
@@ -636,6 +677,8 @@ void MainWindow::onLanguageChanged(int comboIndex)
 
     if (m_settings.syntaxHighlighting && lang != CodeHighlighter::None)
         editor->setLanguage(lang);
+
+    editor->applyTheme(EditorTheme::themeByName(m_settings.themeName));
 }
 
 void MainWindow::updateTabTitle(int index)
@@ -758,6 +801,8 @@ void MainWindow::sshOpenFile()
         if (tab.isMarkdown) editor->setMarkdownMode(true);
         else if (tab.language != CodeHighlighter::None) editor->setLanguage(tab.language);
     }
+
+    editor->applyTheme(EditorTheme::themeByName(m_settings.themeName));
 
     updateTabTitle(idx);
     m_tabWidget->setTabIcon(idx, tab.isMarkdown ?
@@ -884,6 +929,7 @@ void MainWindow::closeEvent(QCloseEvent *event)
             return;
         }
     }
+    saveSettings();
     saveSession();
     saveRecentFiles();
     event->accept();
@@ -978,6 +1024,62 @@ void MainWindow::updateRecentFilesMenu()
         updateRecentFilesMenu();
         saveRecentFiles();
     });
+}
+
+void MainWindow::saveSettings()
+{
+    QSettings s("TextEd", "TextEd");
+    s.beginGroup("settings");
+    s.setValue("editorFontFamily", m_settings.editorFont.family());
+    s.setValue("editorFontSize", m_settings.editorFont.pointSize());
+    s.setValue("guiFontFamily", m_settings.guiFont.family());
+    s.setValue("guiFontSize", m_settings.guiFont.pointSize());
+    s.setValue("syntaxHighlighting", m_settings.syntaxHighlighting);
+    s.setValue("lineNumbers", m_settings.lineNumbers);
+    s.setValue("lineWrap", m_settings.lineWrap);
+    s.setValue("highlightCurrentLine", m_settings.highlightCurrentLine);
+    s.setValue("showWhitespace", m_settings.showWhitespace);
+    s.setValue("tabWidth", m_settings.tabWidth);
+    s.setValue("themeName", m_settings.themeName);
+    s.setValue("autoIndent", m_settings.autoIndent);
+    s.setValue("bracketMatching", m_settings.bracketMatching);
+    s.setValue("autoSave", m_settings.autoSave);
+    s.setValue("autoSaveInterval", m_settings.autoSaveInterval);
+    s.setValue("minimap", m_settings.minimap);
+    s.setValue("showRuler", m_settings.showRuler);
+    s.setValue("rulerColumn", m_settings.rulerColumn);
+    s.endGroup();
+}
+
+void MainWindow::loadSettings()
+{
+    QSettings s("TextEd", "TextEd");
+    s.beginGroup("settings");
+    if (s.contains("editorFontFamily")) {
+        QString family = s.value("editorFontFamily", "Monospace").toString();
+        int size = s.value("editorFontSize", 11).toInt();
+        m_settings.editorFont = QFont(family, size);
+    }
+    if (s.contains("guiFontFamily")) {
+        QString family = s.value("guiFontFamily").toString();
+        int size = s.value("guiFontSize", 10).toInt();
+        m_settings.guiFont = QFont(family, size);
+    }
+    m_settings.syntaxHighlighting = s.value("syntaxHighlighting", m_settings.syntaxHighlighting).toBool();
+    m_settings.lineNumbers = s.value("lineNumbers", m_settings.lineNumbers).toBool();
+    m_settings.lineWrap = s.value("lineWrap", m_settings.lineWrap).toBool();
+    m_settings.highlightCurrentLine = s.value("highlightCurrentLine", m_settings.highlightCurrentLine).toBool();
+    m_settings.showWhitespace = s.value("showWhitespace", m_settings.showWhitespace).toBool();
+    m_settings.tabWidth = s.value("tabWidth", m_settings.tabWidth).toInt();
+    m_settings.themeName = s.value("themeName", m_settings.themeName).toString();
+    m_settings.autoIndent = s.value("autoIndent", m_settings.autoIndent).toBool();
+    m_settings.bracketMatching = s.value("bracketMatching", m_settings.bracketMatching).toBool();
+    m_settings.autoSave = s.value("autoSave", m_settings.autoSave).toBool();
+    m_settings.autoSaveInterval = s.value("autoSaveInterval", m_settings.autoSaveInterval).toInt();
+    m_settings.minimap = s.value("minimap", m_settings.minimap).toBool();
+    m_settings.showRuler = s.value("showRuler", m_settings.showRuler).toBool();
+    m_settings.rulerColumn = s.value("rulerColumn", m_settings.rulerColumn).toInt();
+    s.endGroup();
 }
 
 void MainWindow::saveSession()

@@ -24,11 +24,12 @@ A fast, feature-rich text editor built with Qt 6 and C++17. Designed for efficie
 - **Syntax highlighting** - 28 languages including C/C++, Python, JavaScript, Rust, Go, Java, Assembly, and more
 - **Character encoding** - UTF-8, UTF-16 BE/LE, UTF-32 BE/LE, Latin-1, System; auto-detection via BOM
 - **Color themes** - 12 built-in themes (Default Light, Solarized Light, Monokai, Dracula, One Dark, Nord, Gruvbox Dark/Light, Tomorrow Night, GitHub Dark, Catppuccin Mocha/Latte)
-- **SSH remote editing** - connect to remote servers via SSH/SFTP, browse and edit files
+- **SSH remote editing** - connect to remote servers via SSH/SFTP, browse and edit files, create/rename/delete remote files and directories, save connection profiles (passwords are never stored)
 - **Fully offline** - all rendering resources (KaTeX, Mermaid, highlight.js) are bundled, no internet required
 - **Font zoom** - Ctrl+Plus / Ctrl+Minus
 - **Separate fonts** - independent font selection for GUI and editor text
-- **Configurable** - line numbers, word wrap, current line highlight, whitespace display, tab width, auto-indent, bracket matching, minimap, auto-save
+- **Vertical ruler** - configurable vertical line at a specified column (default 80), useful for code style guides
+- **Configurable** - line numbers, word wrap, current line highlight, whitespace display, tab width, auto-indent, bracket matching, minimap, auto-save, vertical ruler; all settings persist across sessions
 
 ## Requirements
 

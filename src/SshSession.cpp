@@ -307,6 +307,44 @@ bool SshSession::fileExists(const QString &remotePath)
     return libssh2_sftp_stat(m_sftp, pathBytes.constData(), &attrs) == 0;
 }
 
+bool SshSession::mkdir(const QString &remotePath, QString *errorMsg)
+{
+    if (!m_sftp) { if (errorMsg) *errorMsg = "Not connected"; return false; }
+    QByteArray p = remotePath.toUtf8();
+    int rc = libssh2_sftp_mkdir(m_sftp, p.constData(),
+        LIBSSH2_SFTP_S_IRWXU | LIBSSH2_SFTP_S_IRGRP | LIBSSH2_SFTP_S_IXGRP | LIBSSH2_SFTP_S_IROTH | LIBSSH2_SFTP_S_IXOTH);
+    if (rc != 0) { if (errorMsg) *errorMsg = QString("mkdir failed: %1").arg(lastSsh2Error()); return false; }
+    return true;
+}
+
+bool SshSession::rmdir(const QString &remotePath, QString *errorMsg)
+{
+    if (!m_sftp) { if (errorMsg) *errorMsg = "Not connected"; return false; }
+    QByteArray p = remotePath.toUtf8();
+    int rc = libssh2_sftp_rmdir(m_sftp, p.constData());
+    if (rc != 0) { if (errorMsg) *errorMsg = QString("rmdir failed: %1").arg(lastSsh2Error()); return false; }
+    return true;
+}
+
+bool SshSession::unlink(const QString &remotePath, QString *errorMsg)
+{
+    if (!m_sftp) { if (errorMsg) *errorMsg = "Not connected"; return false; }
+    QByteArray p = remotePath.toUtf8();
+    int rc = libssh2_sftp_unlink(m_sftp, p.constData());
+    if (rc != 0) { if (errorMsg) *errorMsg = QString("Delete failed: %1").arg(lastSsh2Error()); return false; }
+    return true;
+}
+
+bool SshSession::rename(const QString &oldPath, const QString &newPath, QString *errorMsg)
+{
+    if (!m_sftp) { if (errorMsg) *errorMsg = "Not connected"; return false; }
+    QByteArray op = oldPath.toUtf8();
+    QByteArray np = newPath.toUtf8();
+    int rc = libssh2_sftp_rename(m_sftp, op.constData(), np.constData());
+    if (rc != 0) { if (errorMsg) *errorMsg = QString("Rename failed: %1").arg(lastSsh2Error()); return false; }
+    return true;
+}
+
 QString SshSession::homeDir()
 {
     return m_homeDir;

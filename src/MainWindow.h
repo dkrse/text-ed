@@ -9,6 +9,7 @@
 class Editor;
 class Minimap;
 class SshSession;
+struct EditorTheme;
 class MarkdownPreview;
 class SearchBar;
 class QSplitter;
@@ -75,6 +76,7 @@ private:
     void connectEditor(Editor *editor);
     void disconnectEditor(Editor *editor);
     void applySettingsToAllEditors();
+    void applyThemeToApp(const EditorTheme &theme);
     static bool isMarkdownFile(const QString &path);
     void populateEncodingCombo();
     void populateLanguageCombo();
@@ -83,6 +85,8 @@ private:
     void loadRecentFiles();
     void saveRecentFiles();
     void updateRecentFilesMenu();
+    void saveSettings();
+    void loadSettings();
     void saveSession();
     void restoreSession();
     void showSearchBar(bool withReplace);

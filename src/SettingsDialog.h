@@ -23,6 +23,8 @@ struct AppSettings {
     bool autoSave = false;
     int autoSaveInterval = 60;
     bool minimap = false;
+    bool showRuler = false;
+    int rulerColumn = 80;
 };
 
 class SettingsDialog : public QDialog
@@ -49,6 +51,8 @@ private:
     QCheckBox *m_autoSave;
     QSpinBox *m_autoSaveInterval;
     QCheckBox *m_minimap;
+    QCheckBox *m_showRuler;
+    QSpinBox *m_rulerColumn;
 
     QFontComboBox *m_guiFontCombo;
     QSpinBox *m_guiFontSize;

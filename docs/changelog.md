@@ -2,6 +2,20 @@
 
 All notable changes to TextEd are documented in this file.
 
+## [0.4.0] - 2026-03-11
+
+### Added
+
+- **Saved SSH connections** - save, load, and delete SSH connection profiles (host, port, username, auth type, key path); passwords are never stored
+- **Remote file management** - create, rename, and delete files and directories in the remote file browser (toolbar buttons + right-click context menu)
+- **Vertical ruler** - configurable vertical line at a specified column (default 80), toggle and position in Settings
+- **Settings persistence** - all editor and appearance settings are now saved via QSettings and restored on next launch
+
+### Fixed
+
+- **Dark theme not fully applied** - menu bar, tab bar, status bar, and dialogs now switch to a dark palette when a dark editor theme is selected
+- **Text invisible after restart with dark theme** - syntax highlighter colors were not applied on startup; theme colors are now applied whenever a highlighter is created or changed
+
 ## [0.3.0] - 2026-03-10
 
 ### Added

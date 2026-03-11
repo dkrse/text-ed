@@ -108,6 +108,20 @@ QWidget *SettingsDialog::createEditorPage()
     m_minimap->setChecked(m_original.minimap);
     behaviorLayout->addWidget(m_minimap);
 
+    m_showRuler = new QCheckBox(tr("Show Vertical Ruler"));
+    m_showRuler->setChecked(m_original.showRuler);
+    behaviorLayout->addWidget(m_showRuler);
+
+    auto *rulerLayout = new QFormLayout;
+    m_rulerColumn = new QSpinBox;
+    m_rulerColumn->setRange(1, 400);
+    m_rulerColumn->setValue(m_original.rulerColumn);
+    m_rulerColumn->setSuffix(tr(" col"));
+    m_rulerColumn->setEnabled(m_original.showRuler);
+    rulerLayout->addRow(tr("Ruler Position:"), m_rulerColumn);
+    behaviorLayout->addLayout(rulerLayout);
+    connect(m_showRuler, &QCheckBox::toggled, m_rulerColumn, &QSpinBox::setEnabled);
+
     layout->addWidget(behaviorGroup);
     layout->addStretch();
 
@@ -174,6 +188,8 @@ AppSettings SettingsDialog::settings() const
     s.autoSave = m_autoSave->isChecked();
     s.autoSaveInterval = m_autoSaveInterval->value();
     s.minimap = m_minimap->isChecked();
+    s.showRuler = m_showRuler->isChecked();
+    s.rulerColumn = m_rulerColumn->value();
 
     return s;
 }

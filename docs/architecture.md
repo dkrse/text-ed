@@ -68,15 +68,15 @@ MainWindow
 
 | File | Description |
 |---|---|
-| `SshSession.h/cpp` | Wrapper around libssh2 for SSH connection, authentication (password/key), and SFTP operations (list, read, write). Includes 512 MB remote file size limit. |
-| `SshConnectDialog.h/cpp` | Connection dialog with host, port, username, password/key authentication options |
-| `RemoteFileBrowser.h/cpp` | Remote filesystem browser dialog with tree view, navigation, file selection |
+| `SshSession.h/cpp` | Wrapper around libssh2 for SSH connection, authentication (password/key), and SFTP operations (list, read, write, mkdir, rmdir, unlink, rename). Includes 512 MB remote file size limit. |
+| `SshConnectDialog.h/cpp` | Connection dialog with host, port, username, password/key authentication options, saved connection profiles (persisted via QSettings, passwords are never stored) |
+| `RemoteFileBrowser.h/cpp` | Remote filesystem browser dialog with tree view, navigation, file selection, and file management (create, rename, delete files and directories) |
 
 ### Settings and Themes
 
 | File | Description |
 |---|---|
-| `SettingsDialog.h/cpp` | Settings dialog with Editor and Appearance tabs. Defines `AppSettings` struct with all configurable options. |
+| `SettingsDialog.h/cpp` | Settings dialog with Editor and Appearance tabs. Defines `AppSettings` struct with all configurable options (including vertical ruler and its column position). |
 | `EditorTheme.h/cpp` | Defines `EditorTheme` struct with 12 built-in color themes |
 
 ## Key Design Decisions
@@ -84,6 +84,10 @@ MainWindow
 ### Tab-based multi-document model
 
 Each tab contains a QWidget container with an `Editor` and optional `Minimap` in an HBoxLayout. A `TabData` struct stores per-tab state (file path, encoding, language, modified flag, preview visibility, remote file info). The `MainWindow` maintains a `QVector<TabData>` parallel to the `QTabWidget` indices. Editors are retrieved from tab containers via `findChild<Editor*>()`.
+
+### Settings persistence
+
+All `AppSettings` values (fonts, theme, editor behavior, ruler, minimap, auto-save) are persisted via `QSettings` in the `settings/` group. `loadSettings()` runs at startup before any UI is created. `saveSettings()` runs after the Settings dialog is accepted and on application close. This ensures the full editor configuration survives restarts.
 
 ### Session persistence
 
@@ -123,7 +127,19 @@ The preview is updated via a debounced `QTimer` (300ms) to avoid excessive re-re
 
 ### Theme system
 
-`EditorTheme` defines colors for: background, foreground, current line, line numbers, selection, and 8 syntax categories (keyword, type, string, comment, number, function, preprocessor, operator). Themes are applied to the `Editor` palette, line number area, minimap background, and forwarded to `CodeHighlighter` which rebuilds its format rules.
+`EditorTheme` defines colors for: background, foreground, current line, line numbers, selection, and 8 syntax categories (keyword, type, string, comment, number, function, preprocessor, operator). Themes are applied to the `Editor` palette, line number area, minimap background, and forwarded to `CodeHighlighter` which rebuilds its format rules. Dark themes also set a dark `QApplication::setPalette()` so that menus, tabs, status bar, and dialogs match the editor background. Theme colors are re-applied after every highlighter creation to ensure syntax colors are always correct (including on startup with restored sessions).
+
+### Vertical ruler
+
+The `Editor` draws a semi-transparent vertical line at a configurable column position via `paintEvent()`. The ruler column and visibility are stored in `AppSettings` and configurable in Settings. The x-position is calculated from `fontMetrics().horizontalAdvance(' ') * rulerColumn + contentOffset().x()`.
+
+### Saved SSH connections
+
+`SshConnectDialog` persists connection profiles (name, host, port, username, auth type, key path) via `QSettings` in a `sshConnections` array. Passwords are never stored. The dialog shows a saved connection list on the left; selecting an entry populates the form fields.
+
+### Remote file management
+
+`RemoteFileBrowser` provides toolbar buttons and a right-click context menu for creating files, creating directories, renaming, and deleting items. These operations use `SshSession::mkdir`, `rmdir`, `unlink`, and `rename` which wrap the corresponding libssh2 SFTP calls.
 
 ### Large file support
 
@@ -131,7 +147,7 @@ The preview is updated via a debounced `QTimer` (300ms) to avoid excessive re-re
 
 ### SSH remote editing
 
-`SshSession` wraps libssh2 with a high-level API for connecting, listing directories, and reading/writing files via SFTP. Remote files are loaded into regular tabs with an `isRemote` flag. Saving (Ctrl+S) detects remote files and writes back via SFTP. Remote file reads are limited to 512 MB to prevent out-of-memory crashes.
+`SshSession` wraps libssh2 with a high-level API for connecting, listing directories, reading/writing files, and file management (mkdir, rmdir, unlink, rename) via SFTP. Remote files are loaded into regular tabs with an `isRemote` flag. Saving (Ctrl+S) detects remote files and writes back via SFTP. Remote file reads are limited to 512 MB to prevent out-of-memory crashes.
 
 ## Build System
 

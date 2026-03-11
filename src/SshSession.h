@@ -41,6 +41,10 @@ public:
     QByteArray readFile(const QString &remotePath, QString *errorMsg = nullptr);
     bool writeFile(const QString &remotePath, const QByteArray &data, QString *errorMsg = nullptr);
     bool fileExists(const QString &remotePath);
+    bool mkdir(const QString &remotePath, QString *errorMsg = nullptr);
+    bool rmdir(const QString &remotePath, QString *errorMsg = nullptr);
+    bool unlink(const QString &remotePath, QString *errorMsg = nullptr);
+    bool rename(const QString &oldPath, const QString &newPath, QString *errorMsg = nullptr);
     QString homeDir();
 
 private:

@@ -155,6 +155,8 @@ void Editor::applySettings(const AppSettings &s)
     setLineWrapMode(s.lineWrap ? QPlainTextEdit::WidgetWidth : QPlainTextEdit::NoWrap);
     setAutoIndent(s.autoIndent);
     setBracketMatching(s.bracketMatching);
+    setShowRuler(s.showRuler);
+    setRulerColumn(s.rulerColumn);
 }
 
 void Editor::applyTheme(const EditorTheme &theme)
@@ -175,6 +177,18 @@ void Editor::applyTheme(const EditorTheme &theme)
     if (m_codeHighlighter) {
         m_codeHighlighter->applyThemeColors(theme.keyword, theme.type, theme.string,
             theme.comment, theme.number, theme.function, theme.preprocessor, theme.operatorColor);
+    }
+}
+
+void Editor::paintEvent(QPaintEvent *event)
+{
+    QPlainTextEdit::paintEvent(event);
+    if (m_showRuler) {
+        QPainter painter(viewport());
+        int x = fontMetrics().horizontalAdvance(QLatin1Char(' ')) * m_rulerColumn
+                + contentOffset().x();
+        painter.setPen(QPen(m_rulerColor, 1));
+        painter.drawLine(x, 0, x, viewport()->height());
     }
 }
 

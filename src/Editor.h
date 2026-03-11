@@ -46,6 +46,8 @@ public:
     void setTabWidth(int width);
     void setAutoIndent(bool on) { m_autoIndent = on; }
     void setBracketMatching(bool on) { m_bracketMatching = on; highlightCurrentLine(); }
+    void setShowRuler(bool on) { m_showRuler = on; viewport()->update(); }
+    void setRulerColumn(int col) { m_rulerColumn = col; viewport()->update(); }
 
     void applySettings(const AppSettings &s);
     void applyTheme(const EditorTheme &theme);
@@ -70,6 +72,7 @@ signals:
 
 protected:
     void resizeEvent(QResizeEvent *event) override;
+    void paintEvent(QPaintEvent *event) override;
     void keyPressEvent(QKeyEvent *event) override;
 
 private slots:
@@ -93,6 +96,9 @@ private:
 
     bool m_autoIndent = true;
     bool m_bracketMatching = true;
+    bool m_showRuler = false;
+    int m_rulerColumn = 80;
+    QColor m_rulerColor = QColor(200, 200, 200, 100);
 
     // Search state
     QList<QTextEdit::ExtraSelection> m_searchSelections;

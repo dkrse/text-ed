@@ -22,6 +22,10 @@ private slots:
     void onItemDoubleClicked(QTreeWidgetItem *item, int column);
     void onAccept();
     void goUp();
+    void createNewFile();
+    void createNewDir();
+    void renameSelected();
+    void deleteSelected();
 
 private:
     void populateList();

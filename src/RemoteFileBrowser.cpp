@@ -9,6 +9,8 @@
 #include <QHeaderView>
 #include <QLabel>
 #include <QMessageBox>
+#include <QInputDialog>
+#include <QMenu>
 
 RemoteFileBrowser::RemoteFileBrowser(SshSession *ssh, QWidget *parent)
     : QDialog(parent), m_ssh(ssh)
@@ -38,6 +40,27 @@ RemoteFileBrowser::RemoteFileBrowser(SshSession *ssh, QWidget *parent)
 
     layout->addLayout(pathLayout);
 
+    // Toolbar for file operations
+    auto *toolLayout = new QHBoxLayout;
+    auto *newFileBtn = new QPushButton(tr("New File"));
+    connect(newFileBtn, &QPushButton::clicked, this, &RemoteFileBrowser::createNewFile);
+    toolLayout->addWidget(newFileBtn);
+
+    auto *newDirBtn = new QPushButton(tr("New Folder"));
+    connect(newDirBtn, &QPushButton::clicked, this, &RemoteFileBrowser::createNewDir);
+    toolLayout->addWidget(newDirBtn);
+
+    auto *renameBtn = new QPushButton(tr("Rename"));
+    connect(renameBtn, &QPushButton::clicked, this, &RemoteFileBrowser::renameSelected);
+    toolLayout->addWidget(renameBtn);
+
+    auto *deleteBtn = new QPushButton(tr("Delete"));
+    connect(deleteBtn, &QPushButton::clicked, this, &RemoteFileBrowser::deleteSelected);
+    toolLayout->addWidget(deleteBtn);
+
+    toolLayout->addStretch();
+    layout->addLayout(toolLayout);
+
     // Tree
     m_tree = new QTreeWidget;
     m_tree->setHeaderLabels({tr("Name"), tr("Size"), tr("Permissions")});
@@ -47,7 +70,16 @@ RemoteFileBrowser::RemoteFileBrowser(SshSession *ssh, QWidget *parent)
     m_tree->header()->setSectionResizeMode(0, QHeaderView::Stretch);
     m_tree->header()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
     m_tree->header()->setSectionResizeMode(2, QHeaderView::ResizeToContents);
+    m_tree->setContextMenuPolicy(Qt::CustomContextMenu);
     connect(m_tree, &QTreeWidget::itemDoubleClicked, this, &RemoteFileBrowser::onItemDoubleClicked);
+    connect(m_tree, &QTreeWidget::customContextMenuRequested, this, [this](const QPoint &pos) {
+        auto *item = m_tree->itemAt(pos);
+        if (!item || item->text(0) == "..") return;
+        QMenu menu;
+        menu.addAction(tr("Rename"), this, &RemoteFileBrowser::renameSelected);
+        menu.addAction(tr("Delete"), this, &RemoteFileBrowser::deleteSelected);
+        menu.exec(m_tree->viewport()->mapToGlobal(pos));
+    });
     layout->addWidget(m_tree);
 
     // Filename
@@ -170,6 +202,99 @@ void RemoteFileBrowser::goUp()
     if (idx <= 0) parent = "/";
     else parent = parent.left(idx);
     navigateTo(parent);
+}
+
+void RemoteFileBrowser::createNewFile()
+{
+    bool ok;
+    QString name = QInputDialog::getText(this, tr("New File"), tr("File name:"),
+        QLineEdit::Normal, QString(), &ok);
+    if (!ok || name.trimmed().isEmpty()) return;
+    name = name.trimmed();
+
+    QString fullPath = m_currentDir;
+    if (!fullPath.endsWith('/')) fullPath += '/';
+    fullPath += name;
+
+    QString errorMsg;
+    if (!m_ssh->writeFile(fullPath, QByteArray(), &errorMsg)) {
+        QMessageBox::warning(this, tr("Error"), errorMsg);
+        return;
+    }
+    navigateTo(m_currentDir);
+}
+
+void RemoteFileBrowser::createNewDir()
+{
+    bool ok;
+    QString name = QInputDialog::getText(this, tr("New Folder"), tr("Folder name:"),
+        QLineEdit::Normal, QString(), &ok);
+    if (!ok || name.trimmed().isEmpty()) return;
+    name = name.trimmed();
+
+    QString fullPath = m_currentDir;
+    if (!fullPath.endsWith('/')) fullPath += '/';
+    fullPath += name;
+
+    QString errorMsg;
+    if (!m_ssh->mkdir(fullPath, &errorMsg)) {
+        QMessageBox::warning(this, tr("Error"), errorMsg);
+        return;
+    }
+    navigateTo(m_currentDir);
+}
+
+void RemoteFileBrowser::renameSelected()
+{
+    auto *item = m_tree->currentItem();
+    if (!item || item->text(0) == "..") return;
+
+    QString oldName = item->text(0);
+    QString oldPath = item->data(0, Qt::UserRole).toString();
+
+    bool ok;
+    QString newName = QInputDialog::getText(this, tr("Rename"), tr("New name:"),
+        QLineEdit::Normal, oldName, &ok);
+    if (!ok || newName.trimmed().isEmpty() || newName.trimmed() == oldName) return;
+    newName = newName.trimmed();
+
+    QString newPath = m_currentDir;
+    if (!newPath.endsWith('/')) newPath += '/';
+    newPath += newName;
+
+    QString errorMsg;
+    if (!m_ssh->rename(oldPath, newPath, &errorMsg)) {
+        QMessageBox::warning(this, tr("Error"), errorMsg);
+        return;
+    }
+    navigateTo(m_currentDir);
+}
+
+void RemoteFileBrowser::deleteSelected()
+{
+    auto *item = m_tree->currentItem();
+    if (!item || item->text(0) == "..") return;
+
+    QString name = item->text(0);
+    QString path = item->data(0, Qt::UserRole).toString();
+    bool isDir = item->data(0, Qt::UserRole + 1).toBool();
+
+    auto r = QMessageBox::question(this, tr("Delete"),
+        tr("Delete '%1'?").arg(name), QMessageBox::Yes | QMessageBox::No);
+    if (r != QMessageBox::Yes) return;
+
+    QString errorMsg;
+    bool ok;
+    if (isDir)
+        ok = m_ssh->rmdir(path, &errorMsg);
+    else
+        ok = m_ssh->unlink(path, &errorMsg);
+
+    if (!ok) {
+        QMessageBox::warning(this, tr("Error"), errorMsg);
+        return;
+    }
+    navigateTo(m_currentDir);
 }
 
 QString RemoteFileBrowser::formatSize(qint64 size) const
