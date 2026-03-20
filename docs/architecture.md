@@ -8,15 +8,16 @@ TextEd is a Qt 6 Widgets application written in C++17. It follows a modular desi
 
 ```
 MainWindow
-├── QTabWidget (multi-document tabs)
-│   └── QWidget container (per tab)
-│       ├── Editor
-│       │   ├── LineNumberArea
-│       │   ├── ScrollBarOverlay (search match markers)
-│       │   ├── MarkdownHighlighter (for .md files)
-│       │   └── CodeHighlighter (for code files)
-│       └── Minimap (VS Code-style code overview)
+├── QToolBar (hamburger menu ☰, right-aligned)
 ├── QSplitter
+│   ├── QTabWidget (multi-document tabs)
+│   │   └── QWidget container (per tab)
+│   │       ├── Editor
+│   │       │   ├── LineNumberArea
+│   │       │   ├── ScrollBarOverlay (search match markers)
+│   │       │   ├── MarkdownHighlighter (for .md files)
+│   │       │   └── CodeHighlighter (for code files)
+│   │       └── Minimap (VS Code-style code overview)
 │   └── MarkdownPreview (QWebEngineView)
 ├── SearchBar (find & replace bar)
 ├── SshSession (SSH/SFTP connection)
@@ -30,7 +31,7 @@ MainWindow
 | File | Description |
 |---|---|
 | `main.cpp` | Application entry point, initializes QtWebEngine and opens files from command line arguments |
-| `MainWindow.h/cpp` | Main application window with tab management, menus, status bar, settings, SSH integration, session restore, recent files, auto-save, drag & drop |
+| `MainWindow.h/cpp` | Main application window with hamburger menu, tab management, status bar, settings, SSH integration, session restore, recent files, auto-save, drag & drop |
 | `Editor.h/cpp` | `QPlainTextEdit` subclass with line number gutter, current line highlighting, font zoom, theme support, search match highlighting, auto-indent, bracket matching |
 
 ### Search & Replace
@@ -84,6 +85,14 @@ MainWindow
 ### Tab-based multi-document model
 
 Each tab contains a QWidget container with an `Editor` and optional `Minimap` in an HBoxLayout. A `TabData` struct stores per-tab state (file path, encoding, language, modified flag, preview visibility, remote file info). The `MainWindow` maintains a `QVector<TabData>` parallel to the `QTabWidget` indices. Editors are retrieved from tab containers via `findChild<Editor*>()`.
+
+### Hamburger menu
+
+The traditional menu bar is replaced with a modern hamburger menu (☰) positioned on the right side of a toolbar. All menus (File, Edit, View, Remote, Preferences) are organized as submenus inside a single `QToolButton` with `InstantPopup` mode. The menu bar is hidden via `menuBar()->hide()`.
+
+### Modification tracking
+
+File modification is tracked by comparing the current editor content against a saved baseline, stored as a Qt dynamic property `savedContent` on each `Editor` instance. When a file is opened or saved, `editor->setProperty("savedContent", editor->toPlainText())` captures the baseline. On every `contentsChanged` signal, the current text is compared against the baseline — if they match, the tab is marked clean (no asterisk). This approach correctly handles undo/redo: undoing all changes back to the original state clears the modified flag. Programmatic changes (theme application, highlighter setup, settings changes) are guarded by an `m_ignoreTextChanged` flag to prevent false modification detection.
 
 ### Settings persistence
 

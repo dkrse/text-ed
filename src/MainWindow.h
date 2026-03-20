@@ -18,6 +18,7 @@ class QLabel;
 class QAction;
 class QComboBox;
 class QTimer;
+class QToolButton;
 
 struct TabData {
     QString filePath;
@@ -55,7 +56,6 @@ private slots:
     void sshDisconnect();
     void sshOpenFile();
     void updateStatusBar();
-    void onTextChanged();
     void updatePreviewContent();
     void onEncodingChanged(int comboIndex);
     void onLanguageChanged(int comboIndex);
@@ -129,4 +129,7 @@ private:
     QStringList m_recentFiles;
     QMenu *m_recentFilesMenu = nullptr;
     static constexpr int MaxRecentFiles = 5;
+
+    QToolButton *m_hamburgerButton = nullptr;
+    bool m_ignoreTextChanged = false;
 };

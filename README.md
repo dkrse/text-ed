@@ -5,6 +5,7 @@ A fast, feature-rich text editor built with Qt 6 and C++17. Designed for efficie
 ## Features
 
 - **Fast file handling** - chunked reading with progress indicator for large files (4 MB chunks)
+- **Hamburger menu** - modern compact menu (☰) with all actions accessible from a single button
 - **Tab-based interface** - multi-document editing with per-tab state
 - **Session restore** - remembers open files and restores them on next launch
 - **Recent files** - quick access to last 5 opened files (File > Recent Files)

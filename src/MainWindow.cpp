@@ -33,6 +33,8 @@
 #include <QCloseEvent>
 #include <QMenu>
 #include <QInputDialog>
+#include <QToolButton>
+#include <QToolBar>
 #include <QMimeData>
 #include <QDragEnterEvent>
 #include <QDropEvent>
@@ -95,7 +97,36 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
 
 void MainWindow::setupMenus()
 {
-    auto *fileMenu = menuBar()->addMenu(tr("&File"));
+    menuBar()->hide();
+
+    auto *toolbar = new QToolBar(this);
+    toolbar->setMovable(false);
+    toolbar->setFloatable(false);
+    toolbar->setIconSize(QSize(20, 20));
+    toolbar->setStyleSheet(
+        "QToolBar { border: none; padding: 2px; spacing: 2px; }"
+    );
+    addToolBar(toolbar);
+
+    auto *spacer = new QWidget(this);
+    spacer->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
+    toolbar->addWidget(spacer);
+
+    m_hamburgerButton = new QToolButton(this);
+    m_hamburgerButton->setText("\u2630");
+    m_hamburgerButton->setFont(QFont(m_hamburgerButton->font().family(), 16));
+    m_hamburgerButton->setPopupMode(QToolButton::InstantPopup);
+    m_hamburgerButton->setStyleSheet(
+        "QToolButton { border: none; padding: 4px 8px; font-size: 18px; }"
+        "QToolButton::menu-indicator { image: none; }"
+    );
+    toolbar->addWidget(m_hamburgerButton);
+
+    auto *menu = new QMenu(this);
+    m_hamburgerButton->setMenu(menu);
+
+    // --- File ---
+    auto *fileMenu = menu->addMenu(tr("&File"));
     fileMenu->addAction(tr("&New"), QKeySequence::New, this, &MainWindow::newFile);
     fileMenu->addAction(tr("&Open..."), QKeySequence::Open, this, &MainWindow::open);
     fileMenu->addAction(tr("&Save"), QKeySequence::Save, this, &MainWindow::save);
@@ -110,7 +141,8 @@ void MainWindow::setupMenus()
     fileMenu->addSeparator();
     fileMenu->addAction(tr("&Quit"), QKeySequence::Quit, this, &QWidget::close);
 
-    auto *editMenu = menuBar()->addMenu(tr("&Edit"));
+    // --- Edit ---
+    auto *editMenu = menu->addMenu(tr("&Edit"));
     editMenu->addAction(tr("&Undo"), QKeySequence::Undo, this, [this]() { if (auto *e = currentEditor()) e->undo(); });
     editMenu->addAction(tr("&Redo"), QKeySequence::Redo, this, [this]() { if (auto *e = currentEditor()) e->redo(); });
     editMenu->addSeparator();
@@ -135,7 +167,8 @@ void MainWindow::setupMenus()
         }
     });
 
-    auto *viewMenu = menuBar()->addMenu(tr("&View"));
+    // --- View ---
+    auto *viewMenu = menu->addMenu(tr("&View"));
     viewMenu->addAction(tr("Zoom &In"), QKeySequence(Qt::CTRL | Qt::Key_Plus), this, [this]() { if (auto *e = currentEditor()) e->zoomInEditor(); });
     viewMenu->addAction(tr("Zoom &Out"), QKeySequence(Qt::CTRL | Qt::Key_Minus), this, [this]() { if (auto *e = currentEditor()) e->zoomOutEditor(); });
     viewMenu->addSeparator();
@@ -157,7 +190,8 @@ void MainWindow::setupMenus()
         }
     });
 
-    auto *remoteMenu = menuBar()->addMenu(tr("&Remote"));
+    // --- Remote ---
+    auto *remoteMenu = menu->addMenu(tr("&Remote"));
     remoteMenu->addAction(tr("&Connect to SSH..."), this, &MainWindow::sshConnect);
     m_sshDisconnectAction = remoteMenu->addAction(tr("&Disconnect"), this, &MainWindow::sshDisconnect);
     m_sshDisconnectAction->setEnabled(false);
@@ -165,8 +199,9 @@ void MainWindow::setupMenus()
     m_sshOpenAction = remoteMenu->addAction(tr("&Open Remote File..."), this, &MainWindow::sshOpenFile);
     m_sshOpenAction->setEnabled(false);
 
-    auto *settingsMenu = menuBar()->addMenu(tr("&Settings"));
-    settingsMenu->addAction(tr("&Preferences..."), QKeySequence(Qt::CTRL | Qt::Key_Comma), this, &MainWindow::openSettings);
+    // --- Settings ---
+    menu->addSeparator();
+    menu->addAction(tr("&Preferences..."), QKeySequence(Qt::CTRL | Qt::Key_Comma), this, &MainWindow::openSettings);
 }
 
 void MainWindow::setupStatusBar()
@@ -246,14 +281,31 @@ int MainWindow::createTab(const QString &title)
 
 void MainWindow::connectEditor(Editor *editor)
 {
-    connect(editor, &QPlainTextEdit::textChanged, this, &MainWindow::onTextChanged);
+    connect(editor->document(), &QTextDocument::contentsChanged, this, [this, editor]() {
+        if (m_ignoreTextChanged) return;
+        auto *td = currentTabData();
+        if (!td) return;
+        if (currentEditor() != editor) return;
+        QString saved = editor->property("savedContent").toString();
+        bool dirty = (editor->toPlainText() != saved);
+        td->modified = dirty;
+        updateTabTitle(m_tabWidget->currentIndex());
+        updateWindowTitle();
+        if (m_preview->isVisible()) m_previewTimer->start();
+    });
     connect(editor, &QPlainTextEdit::cursorPositionChanged, this, &MainWindow::updateStatusBar);
     connect(editor, &Editor::fontSizeChanged, this, [this](int size) {
         m_fontSizeLabel->setText(QString("Font: %1pt").arg(size));
     });
 }
 
-void MainWindow::disconnectEditor(Editor *editor) { disconnect(editor, nullptr, this, nullptr); }
+void MainWindow::disconnectEditor(Editor *editor)
+{
+    disconnect(editor, nullptr, this, nullptr);
+    if (editor->document())
+        disconnect(editor->document(), nullptr, this, nullptr);
+}
+
 Editor *MainWindow::currentEditor() const
 {
     QWidget *w = m_tabWidget->currentWidget();
@@ -321,6 +373,7 @@ void MainWindow::save()
         QApplication::restoreOverrideCursor();
         if (!ok) { QMessageBox::critical(this, tr("Error"), errorMsg); return; }
         td->modified = false;
+        currentEditor()->setProperty("savedContent", currentEditor()->toPlainText());
         updateTabTitle(m_tabWidget->currentIndex());
         updateWindowTitle();
         return;
@@ -437,6 +490,8 @@ void MainWindow::loadFileIntoTab(int index, const QString &path)
     td.encoding = encoding;
     td.language = td.isMarkdown ? CodeHighlighter::None : CodeHighlighter::detectLanguage(path);
 
+    m_ignoreTextChanged = true;
+
     editor->clearHighlighter();
     editor->setPlainText(content);
 
@@ -448,8 +503,10 @@ void MainWindow::loadFileIntoTab(int index, const QString &path)
     // Re-apply theme so newly created highlighter gets themed colors
     editor->applyTheme(EditorTheme::themeByName(m_settings.themeName));
 
+    m_ignoreTextChanged = false;
+
     td.modified = false;
-    editor->document()->setModified(false);
+    editor->setProperty("savedContent", editor->toPlainText());
     addToRecentFiles(path);
     updateTabTitle(index);
     m_tabWidget->setTabIcon(index, td.isMarkdown ?
@@ -472,6 +529,8 @@ void MainWindow::reloadWithEncoding(QStringConverter::Encoding enc)
         return;
     }
 
+    m_ignoreTextChanged = true;
+
     editor->clearHighlighter();
     editor->setPlainText(content);
 
@@ -482,7 +541,10 @@ void MainWindow::reloadWithEncoding(QStringConverter::Encoding enc)
 
     editor->applyTheme(EditorTheme::themeByName(m_settings.themeName));
 
+    m_ignoreTextChanged = false;
+
     td->modified = false;
+    editor->setProperty("savedContent", editor->toPlainText());
     updateTabTitle(m_tabWidget->currentIndex());
 }
 
@@ -510,6 +572,7 @@ void MainWindow::saveFileFromTab(int index, const QString &path)
 
     td.filePath = path;
     td.modified = false;
+    editor->setProperty("savedContent", editor->toPlainText());
 
     bool wasMd = td.isMarkdown;
     td.isMarkdown = isMarkdownFile(path);
@@ -517,12 +580,14 @@ void MainWindow::saveFileFromTab(int index, const QString &path)
 
     if (wasMd != td.isMarkdown || td.language != newLang) {
         td.language = newLang;
+        m_ignoreTextChanged = true;
         editor->clearHighlighter();
         if (m_settings.syntaxHighlighting) {
             if (td.isMarkdown) editor->setMarkdownMode(true);
             else if (td.language != CodeHighlighter::None) editor->setLanguage(td.language);
         }
         editor->applyTheme(EditorTheme::themeByName(m_settings.themeName));
+        m_ignoreTextChanged = false;
         m_tabWidget->setTabIcon(index, td.isMarkdown ?
             style()->standardIcon(QStyle::SP_FileDialogDetailedView) : QIcon());
     }
@@ -558,6 +623,7 @@ void MainWindow::openSettings()
         QApplication::setFont(m_settings.guiFont);
 
         // Apply to all editors
+        m_ignoreTextChanged = true;
         applySettingsToAllEditors();
 
         // If highlighting toggled, re-apply or remove highlighters
@@ -574,6 +640,7 @@ void MainWindow::openSettings()
                 }
             }
         }
+        m_ignoreTextChanged = false;
 
         // Apply theme (must be after highlighters are set up)
         applyThemeToApp(EditorTheme::themeByName(m_settings.themeName));
@@ -595,11 +662,15 @@ void MainWindow::applySettingsToAllEditors()
 
 void MainWindow::applyThemeToApp(const EditorTheme &theme)
 {
-    // Apply theme to all editors and their highlighters
+    // Apply theme to all editors and their highlighters.
+    // Disconnect editors first — applyTheme triggers rehighlight which
+    // would fire textChanged and falsely mark tabs as modified.
+    m_ignoreTextChanged = true;
     for (int i = 0; i < m_tabWidget->count(); ++i) {
         auto *editor = m_tabWidget->widget(i)->findChild<Editor *>();
         if (editor) editor->applyTheme(theme);
     }
+    m_ignoreTextChanged = false;
 
     // Determine if dark theme based on background luminance
     bool isDark = theme.background.lightnessF() < 0.5;
@@ -636,15 +707,8 @@ void MainWindow::updateStatusBar()
     m_statusLabel->setText(QString("Ln %1, Col %2").arg(c.blockNumber() + 1).arg(c.columnNumber() + 1));
 }
 
-void MainWindow::onTextChanged()
-{
-    auto *td = currentTabData();
-    if (!td) return;
-    td->modified = true;
-    updateTabTitle(m_tabWidget->currentIndex());
-    updateWindowTitle();
-    if (m_preview->isVisible()) m_previewTimer->start();
-}
+
+
 
 void MainWindow::updatePreviewContent()
 {
@@ -673,12 +737,15 @@ void MainWindow::onLanguageChanged(int comboIndex)
 
     td->language = lang;
     td->isMarkdown = false;
+
+    m_ignoreTextChanged = true;
     editor->clearHighlighter();
 
     if (m_settings.syntaxHighlighting && lang != CodeHighlighter::None)
         editor->setLanguage(lang);
 
     editor->applyTheme(EditorTheme::themeByName(m_settings.themeName));
+    m_ignoreTextChanged = false;
 }
 
 void MainWindow::updateTabTitle(int index)
@@ -791,8 +858,9 @@ void MainWindow::sshOpenFile()
     tab.isRemote = true;
     tab.remotePath = remotePath;
     tab.isMarkdown = isMarkdownFile(remotePath);
-    tab.modified = false;
     tab.language = tab.isMarkdown ? CodeHighlighter::None : CodeHighlighter::detectLanguage(remotePath);
+
+    m_ignoreTextChanged = true;
 
     editor->clearHighlighter();
     editor->setPlainText(content);
@@ -803,6 +871,11 @@ void MainWindow::sshOpenFile()
     }
 
     editor->applyTheme(EditorTheme::themeByName(m_settings.themeName));
+
+    m_ignoreTextChanged = false;
+
+    tab.modified = false;
+    editor->setProperty("savedContent", editor->toPlainText());
 
     updateTabTitle(idx);
     m_tabWidget->setTabIcon(idx, tab.isMarkdown ?

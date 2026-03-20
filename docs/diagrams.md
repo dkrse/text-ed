@@ -1,0 +1,371 @@
+# Diagrams
+
+Visual diagrams for TextEd architecture, features, and usage flows.
+
+## Application Architecture
+
+```mermaid
+graph TB
+    subgraph MainWindow
+        TW[QTabWidget]
+        SP[QSplitter]
+        SB[SearchBar]
+        STB[StatusBar]
+        HM[Hamburger Menu]
+    end
+
+    subgraph "Tab Container (per tab)"
+        ED[Editor]
+        MM[Minimap]
+    end
+
+    subgraph Editor Internals
+        LNA[LineNumberArea]
+        SBO[ScrollBarOverlay]
+        MH[MarkdownHighlighter]
+        CH[CodeHighlighter]
+    end
+
+    subgraph Preview
+        MP[MarkdownPreview]
+        KT[KaTeX]
+        MJ[Mermaid.js]
+        HJS[highlight.js]
+    end
+
+    subgraph Remote
+        SSH[SshSession / libssh2]
+        SCD[SshConnectDialog]
+        RFB[RemoteFileBrowser]
+    end
+
+    subgraph Settings
+        SD[SettingsDialog]
+        AS[AppSettings]
+        ET[EditorTheme]
+    end
+
+    subgraph File I/O
+        LFR[LargeFileReader]
+    end
+
+    TW --> ED
+    TW --> MM
+    SP --> TW
+    SP --> MP
+    ED --> LNA
+    ED --> SBO
+    ED --> MH
+    ED --> CH
+    MP --> KT
+    MP --> MJ
+    MP --> HJS
+    MainWindow --> SSH
+    SSH --> SCD
+    SSH --> RFB
+    MainWindow --> SD
+    SD --> AS
+    SD --> ET
+    MainWindow --> LFR
+```
+
+## Class Diagram
+
+```mermaid
+classDiagram
+    QMainWindow <|-- MainWindow
+    QPlainTextEdit <|-- Editor
+    QWebEngineView <|-- MarkdownPreview
+    QSyntaxHighlighter <|-- CodeHighlighter
+    QSyntaxHighlighter <|-- MarkdownHighlighter
+    QWidget <|-- Minimap
+    QWidget <|-- SearchBar
+    QWidget <|-- ScrollBarOverlay
+    QDialog <|-- SettingsDialog
+    QDialog <|-- SshConnectDialog
+    QDialog <|-- RemoteFileBrowser
+
+    MainWindow --> Editor : manages tabs
+    MainWindow --> Minimap : per editor
+    MainWindow --> MarkdownPreview : split view
+    MainWindow --> SearchBar : find/replace
+    MainWindow --> SshSession : remote editing
+    MainWindow --> AppSettings : configuration
+    MainWindow --> TabData : per-tab state
+
+    Editor --> CodeHighlighter : code files
+    Editor --> MarkdownHighlighter : .md files
+    Editor --> LineNumberArea : gutter
+    Editor --> ScrollBarOverlay : search markers
+
+    class MainWindow {
+        -QTabWidget* m_tabWidget
+        -QVector~TabData~ m_tabs
+        -AppSettings m_settings
+        -SshSession* m_sshSession
+        +openFile(path)
+        +newFile()
+        +save()
+        +saveAs()
+    }
+
+    class Editor {
+        -bool m_autoIndent
+        -bool m_bracketMatching
+        +setLanguage(lang)
+        +setMarkdownMode(on)
+        +applyTheme(theme)
+        +applySettings(settings)
+        +highlightSearchMatches(text, caseSensitive)
+    }
+
+    class TabData {
+        +QString filePath
+        +bool modified
+        +bool isMarkdown
+        +bool isRemote
+        +QString remotePath
+        +Encoding encoding
+        +Language language
+    }
+
+    class AppSettings {
+        +QFont editorFont
+        +QFont guiFont
+        +bool syntaxHighlighting
+        +bool lineNumbers
+        +bool lineWrap
+        +bool autoIndent
+        +bool bracketMatching
+        +bool autoSave
+        +bool minimap
+        +bool showRuler
+        +QString themeName
+    }
+
+    class EditorTheme {
+        +QColor background
+        +QColor foreground
+        +QColor keyword
+        +QColor string
+        +QColor comment
+        +themeByName(name)$ EditorTheme
+        +themeNames()$ QStringList
+    }
+```
+
+## File Open Flow
+
+```mermaid
+sequenceDiagram
+    actor User
+    participant MW as MainWindow
+    participant LFR as LargeFileReader
+    participant ED as Editor
+    participant CH as CodeHighlighter
+
+    User->>MW: Open file (Ctrl+O / drag & drop)
+    MW->>MW: Check if file already open
+    alt Already open
+        MW->>MW: Switch to existing tab
+    else New file
+        MW->>MW: createTab()
+        MW->>LFR: detectEncoding(path)
+        LFR-->>MW: encoding
+        MW->>LFR: readAll(path, encoding)
+        Note over LFR: 4 MB chunks with progress
+        LFR-->>MW: content
+        MW->>ED: setPlainText(content)
+        MW->>CH: setLanguage(detected)
+        MW->>ED: applyTheme(theme)
+        MW->>ED: setProperty("savedContent", text)
+    end
+```
+
+## Save Flow
+
+```mermaid
+sequenceDiagram
+    actor User
+    participant MW as MainWindow
+    participant ED as Editor
+    participant SSH as SshSession
+
+    User->>MW: Save (Ctrl+S)
+    MW->>MW: Get current TabData
+    alt Remote file
+        MW->>SSH: writeFile(remotePath, data)
+        SSH-->>MW: ok/error
+    else Local file
+        alt Has file path
+            MW->>MW: saveFileFromTab(index, path)
+        else No file path
+            MW->>User: Save As dialog
+            User-->>MW: chosen path
+            MW->>MW: saveFileFromTab(index, path)
+        end
+    end
+    MW->>ED: setProperty("savedContent", text)
+    MW->>MW: updateTabTitle() (remove *)
+```
+
+## Modification Detection
+
+```mermaid
+flowchart TD
+    A[File loaded / saved] --> B["savedContent = editor.toPlainText()"]
+    C[User edits text] --> D[contentsChanged signal]
+    D --> E{ignoreTextChanged?}
+    E -->|Yes| F[Skip - programmatic change]
+    E -->|No| G["Compare: toPlainText() vs savedContent"]
+    G --> H{Content matches?}
+    H -->|Yes| I["modified = false (remove *)"]
+    H -->|No| J["modified = true (show *)"]
+    K[User presses Undo] --> D
+    L[Theme / highlighter change] --> M["ignoreTextChanged = true"]
+    M --> N[Apply changes]
+    N --> O["ignoreTextChanged = false"]
+```
+
+## Search System
+
+```mermaid
+flowchart LR
+    subgraph SearchBar
+        SI[Search Input]
+        RI[Replace Input]
+        CS[Case Sensitive]
+        MC[Match Count]
+    end
+
+    subgraph Editor
+        ES[ExtraSelections]
+        SO[ScrollBarOverlay]
+    end
+
+    SI -->|searchTextChanged| ES
+    SI -->|searchTextChanged| SO
+    CS -->|toggle| ES
+    ES -->|count| MC
+    RI -->|replaceOne| Editor
+    RI -->|replaceAll| Editor
+```
+
+## SSH Remote Editing Flow
+
+```mermaid
+sequenceDiagram
+    actor User
+    participant SCD as SshConnectDialog
+    participant SSH as SshSession
+    participant RFB as RemoteFileBrowser
+    participant MW as MainWindow
+
+    User->>SCD: Connect to SSH
+    SCD->>SSH: connect(hostInfo)
+    SSH->>SSH: libssh2 handshake + auth
+    SSH-->>SCD: connected
+    SCD-->>MW: Update status bar
+
+    User->>RFB: Open Remote File
+    RFB->>SSH: listDirectory(path)
+    SSH-->>RFB: file listing
+    User->>RFB: Select file
+    RFB-->>MW: selected path
+
+    MW->>SSH: readFile(remotePath)
+    SSH-->>MW: file data
+    MW->>MW: Open in tab (isRemote=true)
+
+    User->>MW: Save (Ctrl+S)
+    MW->>SSH: writeFile(remotePath, data)
+    SSH-->>MW: ok
+```
+
+## Theme System
+
+```mermaid
+flowchart TB
+    subgraph "12 Built-in Themes"
+        L1[Default Light]
+        L2[Solarized Light]
+        L3[Gruvbox Light]
+        L4[Catppuccin Latte]
+        D1[Monokai]
+        D2[Dracula]
+        D3[One Dark]
+        D4[Nord]
+        D5[Gruvbox Dark]
+        D6[Tomorrow Night]
+        D7[GitHub Dark]
+        D8[Catppuccin Mocha]
+    end
+
+    subgraph EditorTheme
+        BG[background / foreground]
+        CL[currentLine / selection]
+        LN[lineNumber bg/fg]
+        SY[keyword / type / string / comment / number / function / preprocessor / operator]
+    end
+
+    subgraph "Applied to"
+        EP[Editor palette]
+        LNA[LineNumberArea]
+        MMP[Minimap]
+        CHL[CodeHighlighter formats]
+        AP[QApplication palette - dark themes]
+    end
+
+    L1 & D1 --> EditorTheme
+    EditorTheme --> EP & LNA & MMP & CHL & AP
+```
+
+## Application Feature Map
+
+```mermaid
+mindmap
+  root((TextEd))
+    Editor
+      Syntax Highlighting
+        28 Languages
+        Markdown
+      Line Numbers
+      Current Line Highlight
+      Bracket Matching
+      Auto-indent
+      Font Zoom
+      Whitespace Display
+      Vertical Ruler
+      Minimap
+    File Management
+      Tab Interface
+      Session Restore
+      Recent Files
+      Large File Support
+      Drag & Drop
+      Auto-save
+      Encoding Detection
+    Search
+      Find (Ctrl+F)
+      Replace (Ctrl+H)
+      Go to Line (Ctrl+G)
+      Match Highlighting
+      Scrollbar Markers
+      Case Sensitive
+    Markdown
+      Live Preview
+      LaTeX / KaTeX
+      Mermaid Diagrams
+      Code Highlighting
+      PDF Export
+    Remote
+      SSH / SFTP
+      Remote File Browser
+      File Management
+      Saved Connections
+    Appearance
+      12 Color Themes
+      Dark/Light Mode
+      Separate GUI/Editor Fonts
+      Configurable Settings
+```

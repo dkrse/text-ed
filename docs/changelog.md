@@ -2,6 +2,16 @@
 
 All notable changes to TextEd are documented in this file.
 
+## [0.5.0] - 2026-03-20
+
+### Added
+
+- **Hamburger menu** - replaced traditional menu bar with a modern hamburger menu (☰) on the right side of the toolbar; all menus (File, Edit, View, Remote, Preferences) available as submenus
+
+### Fixed
+
+- **Modification tracking rewrite** - replaced Qt undo-stack-based modification detection with content comparison (`savedContent` property). Files are correctly marked as unmodified when undo returns content to the saved state. Programmatic changes (theme, highlighter, settings) no longer falsely mark files as modified.
+
 ## [0.4.0] - 2026-03-11
 
 ### Added
