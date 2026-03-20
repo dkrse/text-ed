@@ -12,7 +12,6 @@ class SshSession;
 struct EditorTheme;
 class MarkdownPreview;
 class SearchBar;
-class QSplitter;
 class QTabWidget;
 class QLabel;
 class QAction;
@@ -24,11 +23,11 @@ struct TabData {
     QString filePath;
     bool modified = false;
     bool isMarkdown = false;
-    bool previewVisible = false;
     QStringConverter::Encoding encoding = QStringConverter::Utf8;
     CodeHighlighter::Language language = CodeHighlighter::None;
     bool isRemote = false;
     QString remotePath;
+    bool isPreview = false;
 };
 
 class MainWindow : public QMainWindow
@@ -56,7 +55,6 @@ private slots:
     void sshDisconnect();
     void sshOpenFile();
     void updateStatusBar();
-    void updatePreviewContent();
     void onEncodingChanged(int comboIndex);
     void onLanguageChanged(int comboIndex);
 
@@ -100,10 +98,16 @@ private:
     void autoSaveAll();
     void updateAutoSaveTimer();
     void updateMinimaps();
+    void addPreviewButton(int tabIndex);
+    void openPreviewTab(int sourceIndex);
+    void closePreviewTab(int previewIndex);
+    int sourceIndexForPreview(int previewIndex) const;
+    int previewIndexForSource(int sourceIndex) const;
+    bool isPreviewTab(int index) const;
+    MarkdownPreview *currentMarkdownPreview() const;
 
     QTabWidget *m_tabWidget;
-    MarkdownPreview *m_preview;
-    QSplitter *m_splitter;
+    QList<MarkdownPreview*> m_mdPreviews;
 
     QVector<TabData> m_tabs;
     AppSettings m_settings;
@@ -114,7 +118,6 @@ private:
     QLabel *m_fontSizeLabel;
     QAction *m_previewAction;
 
-    QTimer *m_previewTimer;
     QTimer *m_autoSaveTimer = nullptr;
 
     QMap<Editor*, Minimap*> m_minimaps;

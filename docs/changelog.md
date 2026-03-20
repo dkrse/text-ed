@@ -7,10 +7,22 @@ All notable changes to TextEd are documented in this file.
 ### Added
 
 - **Hamburger menu** - replaced traditional menu bar with a modern hamburger menu (☰) on the right side of the toolbar; all menus (File, Edit, View, Remote, Preferences) available as submenus
+- **Markdown preview in tabs** - preview opens as a separate tab next to the source file; multiple previews can be open simultaneously; each markdown tab has a preview toggle button
+- **Preview dark/light mode** - preview automatically follows the editor theme (dark background, themed colors for headings, code, links, borders)
+- **Preview zoom** - Ctrl+Plus/Minus and Ctrl+scroll zoom the preview independently; context-aware (zooms preview when preview tab is active, editor otherwise)
+- **Multi-line LaTeX math** - `$...$` and `$$...$$` expressions spanning multiple lines are now correctly rendered in preview
+- **Improved markdown parser** - ordered lists, multi-line blockquotes, tables with column alignment, strikethrough (`~~text~~`), inline code protection from bold/italic processing
+- **WebEngine warmup** - hidden QWebEngineView pre-initializes the Chromium subprocess at startup, eliminating flicker on first preview open
+- **Dependencies documentation** - new `docs/dependencies.md` with build and runtime dependency details for Debian 13 (trixie)
 
 ### Fixed
 
 - **Modification tracking rewrite** - replaced Qt undo-stack-based modification detection with content comparison (`savedContent` property). Files are correctly marked as unmodified when undo returns content to the saved state. Programmatic changes (theme, highlighter, settings) no longer falsely mark files as modified.
+
+### Changed
+
+- **MarkdownPreview rewritten** - now a QWidget containing QWebEngineView (instead of inheriting from it) with internal 400ms debounce timer, shared temp directory with integrity checking, and full-width body layout
+- **Preview resources** - extracted to shared `/tmp/text-ed-preview` directory (instead of per-instance QTemporaryDir) with integrity verification on each launch
 
 ## [0.4.0] - 2026-03-11
 

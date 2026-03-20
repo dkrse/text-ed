@@ -1,25 +1,34 @@
 #pragma once
+#include <QWidget>
 #include <QWebEngineView>
-#include <QTemporaryDir>
-#include <QTemporaryFile>
+#include <QTimer>
 
-class MarkdownPreview : public QWebEngineView
+class MarkdownPreview : public QWidget
 {
     Q_OBJECT
 public:
     explicit MarkdownPreview(QWidget *parent = nullptr);
+
+    void setDarkMode(bool dark);
+    void zoomIn();
+    void zoomOut();
 
 public slots:
     void updatePreview(const QString &markdownText);
     void exportToPdf(const QString &filePath);
 
 private:
-    QString buildHtml(const QString &markdownText) const;
-    QString markdownToHtml(const QString &md) const;
-    static QString processInline(const QString &text);
     void deployResources();
+    void render();
+    QString markdownToHtml(const QString &md) const;
+    QString buildHtml(const QString &body) const;
+    static QString processInline(const QString &text);
 
-    QTemporaryDir m_tempDir;
+    QWebEngineView *m_webView;
+    QTimer *m_debounce;
+    QString m_pendingMd;
+    bool m_dark = false;
+
+    QString m_tempDir;
     QString m_htmlPath;
-    QString m_resDir; // path to katex/mermaid resources
 };

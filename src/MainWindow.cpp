@@ -15,7 +15,6 @@
 #include <QStatusBar>
 #include <QFileDialog>
 #include <QMessageBox>
-#include <QSplitter>
 #include <QTabWidget>
 #include <QLabel>
 #include <QComboBox>
@@ -35,6 +34,8 @@
 #include <QInputDialog>
 #include <QToolButton>
 #include <QToolBar>
+#include <QTabBar>
+#include <QWebEngineView>
 #include <QMimeData>
 #include <QDragEnterEvent>
 #include <QDropEvent>
@@ -51,34 +52,19 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
     centralLayout->setContentsMargins(0, 0, 0, 0);
     centralLayout->setSpacing(0);
 
-    m_splitter = new QSplitter(Qt::Horizontal, this);
-
     m_tabWidget = new QTabWidget(this);
     m_tabWidget->setTabsClosable(true);
-    m_tabWidget->setMovable(true);
+    m_tabWidget->setMovable(false);
     m_tabWidget->setDocumentMode(true);
     connect(m_tabWidget, &QTabWidget::tabCloseRequested, this, &MainWindow::closeTab);
     connect(m_tabWidget, &QTabWidget::currentChanged, this, &MainWindow::onTabChanged);
 
-    m_preview = new MarkdownPreview(this);
-    m_preview->hide();
-
-    m_splitter->addWidget(m_tabWidget);
-    m_splitter->addWidget(m_preview);
-    m_splitter->setStretchFactor(0, 1);
-    m_splitter->setStretchFactor(1, 1);
-
-    centralLayout->addWidget(m_splitter, 1);
+    centralLayout->addWidget(m_tabWidget, 1);
 
     setupSearchBar();
     centralLayout->addWidget(m_searchBar);
 
     setCentralWidget(centralContainer);
-
-    m_previewTimer = new QTimer(this);
-    m_previewTimer->setSingleShot(true);
-    m_previewTimer->setInterval(300);
-    connect(m_previewTimer, &QTimer::timeout, this, &MainWindow::updatePreviewContent);
 
     loadRecentFiles();
     setupMenus();
@@ -89,6 +75,13 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
     updateAutoSaveTimer();
 
     setAcceptDrops(true);
+
+    // Pre-initialize QWebEngine to avoid flicker on first MarkdownPreview
+    auto *warmup = new QWebEngineView(this);
+    warmup->setFixedSize(0, 0);
+    warmup->setVisible(false);
+    warmup->load(QUrl("about:blank"));
+    connect(warmup, &QWebEngineView::loadFinished, warmup, &QObject::deleteLater);
 
     restoreSession();
     applyThemeToApp(EditorTheme::themeByName(m_settings.themeName));
@@ -123,6 +116,11 @@ void MainWindow::setupMenus()
     toolbar->addWidget(m_hamburgerButton);
 
     auto *menu = new QMenu(this);
+    menu->setStyleSheet(
+        "QMenu { padding: 4px 0; }"
+        "QMenu::item { padding: 4px 20px 4px 20px; }"
+        "QMenu::item:selected { background: palette(highlight); color: palette(highlighted-text); }"
+    );
     m_hamburgerButton->setMenu(menu);
 
     // --- File ---
@@ -169,8 +167,14 @@ void MainWindow::setupMenus()
 
     // --- View ---
     auto *viewMenu = menu->addMenu(tr("&View"));
-    viewMenu->addAction(tr("Zoom &In"), QKeySequence(Qt::CTRL | Qt::Key_Plus), this, [this]() { if (auto *e = currentEditor()) e->zoomInEditor(); });
-    viewMenu->addAction(tr("Zoom &Out"), QKeySequence(Qt::CTRL | Qt::Key_Minus), this, [this]() { if (auto *e = currentEditor()) e->zoomOutEditor(); });
+    viewMenu->addAction(tr("Zoom &In"), QKeySequence(Qt::CTRL | Qt::Key_Plus), this, [this]() {
+        if (auto *mdp = currentMarkdownPreview()) mdp->zoomIn();
+        else if (auto *e = currentEditor()) e->zoomInEditor();
+    });
+    viewMenu->addAction(tr("Zoom &Out"), QKeySequence(Qt::CTRL | Qt::Key_Minus), this, [this]() {
+        if (auto *mdp = currentMarkdownPreview()) mdp->zoomOut();
+        else if (auto *e = currentEditor()) e->zoomOutEditor();
+    });
     viewMenu->addSeparator();
     m_previewAction = viewMenu->addAction(tr("Markdown &Preview"));
     m_previewAction->setCheckable(true);
@@ -178,7 +182,10 @@ void MainWindow::setupMenus()
     connect(m_previewAction, &QAction::toggled, this, &MainWindow::togglePreview);
 
     viewMenu->addAction(tr("Export Preview to &PDF..."), this, [this]() {
-        if (!m_preview->isVisible()) {
+        auto *preview = currentMarkdownPreview();
+        if (!preview && !m_mdPreviews.isEmpty())
+            preview = m_mdPreviews.first();
+        if (!preview) {
             QMessageBox::information(this, tr("Export PDF"), tr("Preview must be open first."));
             return;
         }
@@ -186,7 +193,7 @@ void MainWindow::setupMenus()
                             tr("PDF Files (*.pdf)"));
         if (!path.isEmpty()) {
             if (!path.endsWith(".pdf", Qt::CaseInsensitive)) path += ".pdf";
-            m_preview->exportToPdf(path);
+            preview->exportToPdf(path);
         }
     });
 
@@ -283,15 +290,20 @@ void MainWindow::connectEditor(Editor *editor)
 {
     connect(editor->document(), &QTextDocument::contentsChanged, this, [this, editor]() {
         if (m_ignoreTextChanged) return;
-        auto *td = currentTabData();
-        if (!td) return;
-        if (currentEditor() != editor) return;
+        // Find the tab index for this editor
+        int tabIdx = -1;
+        for (int i = 0; i < m_tabWidget->count(); ++i) {
+            auto *w = m_tabWidget->widget(i);
+            if (w && w->findChild<Editor *>() == editor) { tabIdx = i; break; }
+        }
+        if (tabIdx < 0 || tabIdx >= m_tabs.size()) return;
+        auto *td = &m_tabs[tabIdx];
+        if (td->isPreview) return;
         QString saved = editor->property("savedContent").toString();
         bool dirty = (editor->toPlainText() != saved);
         td->modified = dirty;
-        updateTabTitle(m_tabWidget->currentIndex());
+        updateTabTitle(tabIdx);
         updateWindowTitle();
-        if (m_preview->isVisible()) m_previewTimer->start();
     });
     connect(editor, &QPlainTextEdit::cursorPositionChanged, this, &MainWindow::updateStatusBar);
     connect(editor, &Editor::fontSizeChanged, this, [this](int size) {
@@ -308,6 +320,15 @@ void MainWindow::disconnectEditor(Editor *editor)
 
 Editor *MainWindow::currentEditor() const
 {
+    int idx = m_tabWidget->currentIndex();
+    if (isPreviewTab(idx)) {
+        int srcIdx = sourceIndexForPreview(idx);
+        if (srcIdx >= 0) {
+            auto *w = m_tabWidget->widget(srcIdx);
+            return w ? w->findChild<Editor *>() : nullptr;
+        }
+        return nullptr;
+    }
     QWidget *w = m_tabWidget->currentWidget();
     if (!w) return nullptr;
     return w->findChild<Editor *>();
@@ -316,6 +337,10 @@ Editor *MainWindow::currentEditor() const
 TabData *MainWindow::currentTabData()
 {
     int i = m_tabWidget->currentIndex();
+    if (isPreviewTab(i)) {
+        int si = sourceIndexForPreview(i);
+        return (si >= 0 && si < m_tabs.size()) ? &m_tabs[si] : nullptr;
+    }
     return (i >= 0 && i < m_tabs.size()) ? &m_tabs[i] : nullptr;
 }
 
@@ -391,7 +416,21 @@ void MainWindow::saveAs()
 
 void MainWindow::closeTab(int index)
 {
+    // Closing a preview tab
+    if (isPreviewTab(index)) {
+        closePreviewTab(index);
+        return;
+    }
+
     if (index < 0 || index >= m_tabs.size()) return;
+
+    // If closing the source tab of an open preview, close its preview first
+    QWidget *srcWidget = m_tabWidget->widget(index);
+    int pi = previewIndexForSource(index);
+    if (pi >= 0) {
+        closePreviewTab(pi);
+        // Recalculate index (preview was after source, so source index stays same)
+    }
 
     auto &td = m_tabs[index];
     if (td.modified) {
@@ -412,26 +451,34 @@ void MainWindow::closeTab(int index)
     }
     m_tabWidget->removeTab(index);
     m_tabs.remove(index);
+
     if (w) w->deleteLater();
-    if (m_tabWidget->count() == 0) createTab();
+
+    // Check if only preview tabs remain
+    bool hasEditorTab = false;
+    for (int i = 0; i < m_tabs.size(); ++i) {
+        if (!m_tabs[i].isPreview) { hasEditorTab = true; break; }
+    }
+    if (!hasEditorTab) createTab();
 }
 
 void MainWindow::onTabChanged(int index)
 {
+    if (isPreviewTab(index)) {
+        m_previewAction->blockSignals(true);
+        m_previewAction->setChecked(true);
+        m_previewAction->blockSignals(false);
+        return;
+    }
+
     if (index < 0 || index >= m_tabs.size()) return;
+    if (m_tabs[index].isPreview) return;
 
     auto &td = m_tabs[index];
 
     m_previewAction->blockSignals(true);
-    m_previewAction->setChecked(td.previewVisible);
+    m_previewAction->setChecked(previewIndexForSource(index) >= 0);
     m_previewAction->blockSignals(false);
-
-    m_preview->setVisible(td.previewVisible);
-    if (td.previewVisible) {
-        int total = m_splitter->width();
-        m_splitter->setSizes({total / 2, total / 2});
-        updatePreviewContent();
-    }
 
     m_encodingCombo->blockSignals(true);
     int encIdx = m_encodingCombo->findText(LargeFileReader::encodingName(td.encoding));
@@ -509,8 +556,8 @@ void MainWindow::loadFileIntoTab(int index, const QString &path)
     editor->setProperty("savedContent", editor->toPlainText());
     addToRecentFiles(path);
     updateTabTitle(index);
-    m_tabWidget->setTabIcon(index, td.isMarkdown ?
-        style()->standardIcon(QStyle::SP_FileDialogDetailedView) : QIcon());
+    if (td.isMarkdown)
+        addPreviewButton(index);
 
     if (m_tabWidget->currentIndex() == index) onTabChanged(index);
     updateWindowTitle();
@@ -588,8 +635,8 @@ void MainWindow::saveFileFromTab(int index, const QString &path)
         }
         editor->applyTheme(EditorTheme::themeByName(m_settings.themeName));
         m_ignoreTextChanged = false;
-        m_tabWidget->setTabIcon(index, td.isMarkdown ?
-            style()->standardIcon(QStyle::SP_FileDialogDetailedView) : QIcon());
+        if (td.isMarkdown)
+            addPreviewButton(index);
     }
 
     updateTabTitle(index);
@@ -598,16 +645,142 @@ void MainWindow::saveFileFromTab(int index, const QString &path)
 
 void MainWindow::togglePreview()
 {
-    bool show = m_previewAction->isChecked();
-    auto *td = currentTabData();
-    if (td) td->previewVisible = show;
-
-    m_preview->setVisible(show);
-    if (show) {
-        int total = m_splitter->width();
-        m_splitter->setSizes({total / 2, total / 2});
-        updatePreviewContent();
+    int idx = m_tabWidget->currentIndex();
+    if (isPreviewTab(idx)) {
+        closePreviewTab(idx);
+    } else {
+        // Check if this source already has a preview open
+        QWidget *srcWidget = m_tabWidget->widget(idx);
+        int existingPreview = previewIndexForSource(idx);
+        if (existingPreview >= 0)
+            closePreviewTab(existingPreview);
+        else
+            openPreviewTab(idx);
     }
+}
+
+void MainWindow::openPreviewTab(int sourceIndex)
+{
+    QWidget *srcWidget = m_tabWidget->widget(sourceIndex);
+    if (!srcWidget || isPreviewTab(sourceIndex)) return;
+
+    // Already has preview?
+    if (previewIndexForSource(sourceIndex) >= 0) return;
+
+    auto *editor = srcWidget->findChild<Editor *>();
+    if (!editor) return;
+
+    auto *preview = new MarkdownPreview(this);
+    preview->setProperty("sourceEditor", QVariant::fromValue<QWidget *>(srcWidget));
+
+    // Set dark mode based on current theme
+    auto theme = EditorTheme::themeByName(m_settings.themeName);
+    preview->setDarkMode(theme.background.lightnessF() < 0.5);
+
+    m_mdPreviews.append(preview);
+
+    // Live updates: direct connect from editor to preview
+    connect(editor, &QPlainTextEdit::textChanged, preview, [preview, editor]() {
+        preview->updatePreview(editor->toPlainText());
+    });
+
+    auto &srcTd = m_tabs[sourceIndex];
+    QString srcName = srcTd.filePath.isEmpty() ? tr("Untitled") : QFileInfo(srcTd.filePath).fileName();
+
+    int insertAt = sourceIndex + 1;
+    int previewIdx = m_tabWidget->insertTab(insertAt, preview, tr("Preview: %1").arg(srcName));
+    m_tabWidget->setTabToolTip(previewIdx, tr("Markdown Preview"));
+    m_tabWidget->setTabIcon(previewIdx,
+        style()->standardIcon(QStyle::SP_FileDialogDetailedView));
+
+    TabData previewTd;
+    previewTd.isPreview = true;
+    m_tabs.insert(previewIdx, previewTd);
+
+    m_tabWidget->setCurrentIndex(previewIdx);
+
+    // Initial render
+    preview->updatePreview(editor->toPlainText());
+}
+
+void MainWindow::closePreviewTab(int previewIndex)
+{
+    if (previewIndex < 0 || previewIndex >= m_tabs.size()) return;
+    if (!m_tabs[previewIndex].isPreview) return;
+
+    auto *preview = qobject_cast<MarkdownPreview *>(m_tabWidget->widget(previewIndex));
+
+    m_tabWidget->removeTab(previewIndex);
+    m_tabs.remove(previewIndex);
+
+    if (preview) {
+        m_mdPreviews.removeOne(preview);
+        preview->deleteLater();
+    }
+}
+
+int MainWindow::sourceIndexForPreview(int previewIndex) const
+{
+    if (previewIndex < 0 || previewIndex >= m_tabs.size()) return -1;
+    if (!m_tabs[previewIndex].isPreview) return -1;
+
+    auto *preview = qobject_cast<MarkdownPreview *>(m_tabWidget->widget(previewIndex));
+    if (!preview) return -1;
+
+    auto *srcWidget = preview->property("sourceEditor").value<QWidget *>();
+    if (!srcWidget) return -1;
+
+    for (int i = 0; i < m_tabWidget->count(); ++i) {
+        if (m_tabWidget->widget(i) == srcWidget) return i;
+    }
+    return -1;
+}
+
+int MainWindow::previewIndexForSource(int sourceIndex) const
+{
+    QWidget *srcWidget = m_tabWidget->widget(sourceIndex);
+    if (!srcWidget) return -1;
+
+    for (int i = 0; i < m_tabWidget->count(); ++i) {
+        auto *mdp = qobject_cast<MarkdownPreview *>(m_tabWidget->widget(i));
+        if (mdp && mdp->property("sourceEditor").value<QWidget *>() == srcWidget)
+            return i;
+    }
+    return -1;
+}
+
+bool MainWindow::isPreviewTab(int index) const
+{
+    return index >= 0 && index < m_tabs.size() && m_tabs[index].isPreview;
+}
+
+MarkdownPreview *MainWindow::currentMarkdownPreview() const
+{
+    return qobject_cast<MarkdownPreview *>(m_tabWidget->currentWidget());
+}
+
+void MainWindow::addPreviewButton(int tabIndex)
+{
+    auto *btn = new QToolButton(m_tabWidget);
+    btn->setIcon(style()->standardIcon(QStyle::SP_FileDialogDetailedView));
+    btn->setToolTip(tr("Toggle Markdown Preview"));
+    btn->setAutoRaise(true);
+    btn->setIconSize(QSize(14, 14));
+    btn->setFixedSize(20, 20);
+    QWidget *tabWidget = m_tabWidget->widget(tabIndex);
+    connect(btn, &QToolButton::clicked, this, [this, tabWidget]() {
+        for (int i = 0; i < m_tabWidget->count(); ++i) {
+            if (m_tabWidget->widget(i) == tabWidget) {
+                int pi = previewIndexForSource(i);
+                if (pi >= 0)
+                    closePreviewTab(pi);
+                else
+                    openPreviewTab(i);
+                return;
+            }
+        }
+    });
+    m_tabWidget->tabBar()->setTabButton(tabIndex, QTabBar::LeftSide, btn);
 }
 
 void MainWindow::openSettings()
@@ -672,8 +845,10 @@ void MainWindow::applyThemeToApp(const EditorTheme &theme)
     }
     m_ignoreTextChanged = false;
 
-    // Determine if dark theme based on background luminance
+    // Update preview dark mode
     bool isDark = theme.background.lightnessF() < 0.5;
+    for (auto *mdp : m_mdPreviews)
+        mdp->setDarkMode(isDark);
 
     if (isDark) {
         QPalette darkPalette;
@@ -710,11 +885,7 @@ void MainWindow::updateStatusBar()
 
 
 
-void MainWindow::updatePreviewContent()
-{
-    auto *editor = currentEditor();
-    if (editor) m_preview->updatePreview(editor->toPlainText());
-}
+
 
 void MainWindow::onEncodingChanged(int comboIndex)
 {
@@ -878,8 +1049,8 @@ void MainWindow::sshOpenFile()
     editor->setProperty("savedContent", editor->toPlainText());
 
     updateTabTitle(idx);
-    m_tabWidget->setTabIcon(idx, tab.isMarkdown ?
-        style()->standardIcon(QStyle::SP_FileDialogDetailedView) : QIcon());
+    if (tab.isMarkdown)
+        addPreviewButton(idx);
     m_tabWidget->setTabToolTip(idx, m_sshSession->hostLabel() + ":" + remotePath);
 
     if (m_tabWidget->currentIndex() == idx) onTabChanged(idx);
@@ -984,7 +1155,7 @@ void MainWindow::updateSearchMatchLabel()
 void MainWindow::closeEvent(QCloseEvent *event)
 {
     for (int i = 0; i < m_tabs.size(); ++i) {
-        if (!m_tabs[i].modified) continue;
+        if (m_tabs[i].isPreview || !m_tabs[i].modified) continue;
         m_tabWidget->setCurrentIndex(i);
         QString name = m_tabs[i].filePath.isEmpty() ? tr("Untitled") : QFileInfo(m_tabs[i].filePath).fileName();
         auto r = QMessageBox::question(this, tr("Unsaved Changes"),
@@ -1025,6 +1196,7 @@ void MainWindow::dropEvent(QDropEvent *event)
 void MainWindow::autoSaveAll()
 {
     for (int i = 0; i < m_tabs.size(); ++i) {
+        if (m_tabs[i].isPreview) continue;
         if (m_tabs[i].modified && !m_tabs[i].filePath.isEmpty() && !m_tabs[i].isRemote) {
             saveFileFromTab(i, m_tabs[i].filePath);
         }
@@ -1161,6 +1333,7 @@ void MainWindow::saveSession()
     QStringList sessionFiles;
     int activeTab = m_tabWidget->currentIndex();
     for (int i = 0; i < m_tabs.size(); ++i) {
+        if (m_tabs[i].isPreview) continue;
         if (!m_tabs[i].filePath.isEmpty() && !m_tabs[i].isRemote && QFileInfo::exists(m_tabs[i].filePath))
             sessionFiles.append(m_tabs[i].filePath);
     }

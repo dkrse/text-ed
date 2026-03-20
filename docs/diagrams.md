@@ -8,13 +8,12 @@ Visual diagrams for TextEd architecture, features, and usage flows.
 graph TB
     subgraph MainWindow
         TW[QTabWidget]
-        SP[QSplitter]
         SB[SearchBar]
         STB[StatusBar]
         HM[Hamburger Menu]
     end
 
-    subgraph "Tab Container (per tab)"
+    subgraph "Editor Tab (per file)"
         ED[Editor]
         MM[Minimap]
     end
@@ -26,8 +25,9 @@ graph TB
         CH[CodeHighlighter]
     end
 
-    subgraph Preview
-        MP[MarkdownPreview]
+    subgraph "Preview Tab (per .md file)"
+        MP["MarkdownPreview (QWidget)"]
+        WV[QWebEngineView]
         KT[KaTeX]
         MJ[Mermaid.js]
         HJS[highlight.js]
@@ -51,15 +51,15 @@ graph TB
 
     TW --> ED
     TW --> MM
-    SP --> TW
-    SP --> MP
+    TW --> MP
+    MP --> WV
+    WV --> KT
+    WV --> MJ
+    WV --> HJS
     ED --> LNA
     ED --> SBO
     ED --> MH
     ED --> CH
-    MP --> KT
-    MP --> MJ
-    MP --> HJS
     MainWindow --> SSH
     SSH --> SCD
     SSH --> RFB
@@ -75,7 +75,7 @@ graph TB
 classDiagram
     QMainWindow <|-- MainWindow
     QPlainTextEdit <|-- Editor
-    QWebEngineView <|-- MarkdownPreview
+    QWidget <|-- MarkdownPreview
     QSyntaxHighlighter <|-- CodeHighlighter
     QSyntaxHighlighter <|-- MarkdownHighlighter
     QWidget <|-- Minimap
@@ -87,7 +87,7 @@ classDiagram
 
     MainWindow --> Editor : manages tabs
     MainWindow --> Minimap : per editor
-    MainWindow --> MarkdownPreview : split view
+    MainWindow --> MarkdownPreview : per md file
     MainWindow --> SearchBar : find/replace
     MainWindow --> SshSession : remote editing
     MainWindow --> AppSettings : configuration
@@ -98,15 +98,19 @@ classDiagram
     Editor --> LineNumberArea : gutter
     Editor --> ScrollBarOverlay : search markers
 
+    MarkdownPreview --> QWebEngineView : contains
+
     class MainWindow {
         -QTabWidget* m_tabWidget
         -QVector~TabData~ m_tabs
+        -QList~MarkdownPreview*~ m_mdPreviews
         -AppSettings m_settings
         -SshSession* m_sshSession
         +openFile(path)
         +newFile()
         +save()
-        +saveAs()
+        +openPreviewTab(sourceIndex)
+        +closePreviewTab(previewIndex)
     }
 
     class Editor {
@@ -119,11 +123,23 @@ classDiagram
         +highlightSearchMatches(text, caseSensitive)
     }
 
+    class MarkdownPreview {
+        -QWebEngineView* m_webView
+        -QTimer* m_debounce
+        -bool m_dark
+        +updatePreview(markdown)
+        +setDarkMode(dark)
+        +zoomIn()
+        +zoomOut()
+        +exportToPdf(path)
+    }
+
     class TabData {
         +QString filePath
         +bool modified
         +bool isMarkdown
         +bool isRemote
+        +bool isPreview
         +QString remotePath
         +Encoding encoding
         +Language language
@@ -179,6 +195,7 @@ sequenceDiagram
         MW->>CH: setLanguage(detected)
         MW->>ED: applyTheme(theme)
         MW->>ED: setProperty("savedContent", text)
+        Note over MW: Add preview button if .md
     end
 ```
 
@@ -207,6 +224,35 @@ sequenceDiagram
     end
     MW->>ED: setProperty("savedContent", text)
     MW->>MW: updateTabTitle() (remove *)
+```
+
+## Markdown Preview Flow
+
+```mermaid
+sequenceDiagram
+    actor User
+    participant MW as MainWindow
+    participant ED as Editor
+    participant MP as MarkdownPreview
+    participant WV as QWebEngineView
+
+    User->>MW: Click preview button on .md tab
+    MW->>MP: new MarkdownPreview()
+    MW->>MP: setDarkMode(isDark)
+    MW->>MW: connect(editor.textChanged → preview)
+    MW->>MW: Insert preview tab after source
+    MP->>MP: updatePreview(text)
+    MP->>MP: debounce 400ms
+    MP->>MP: render()
+    Note over MP: markdownToHtml() with math protection
+    Note over MP: buildHtml() with theme-aware CSS
+    MP->>MP: Write HTML to temp file
+    MP->>WV: load(file:///tmp/.../preview.html)
+
+    User->>ED: Edit text
+    ED-->>MP: textChanged signal
+    MP->>MP: updatePreview(text)
+    MP->>MP: debounce 400ms...
 ```
 
 ## Modification Detection
@@ -313,11 +359,12 @@ flowchart TB
         LNA[LineNumberArea]
         MMP[Minimap]
         CHL[CodeHighlighter formats]
+        MPV[MarkdownPreview dark/light]
         AP[QApplication palette - dark themes]
     end
 
     L1 & D1 --> EditorTheme
-    EditorTheme --> EP & LNA & MMP & CHL & AP
+    EditorTheme --> EP & LNA & MMP & CHL & MPV & AP
 ```
 
 ## Application Feature Map
@@ -346,17 +393,21 @@ mindmap
       Auto-save
       Encoding Detection
     Search
-      Find (Ctrl+F)
-      Replace (Ctrl+H)
-      Go to Line (Ctrl+G)
+      Find Ctrl+F
+      Replace Ctrl+H
+      Go to Line Ctrl+G
       Match Highlighting
       Scrollbar Markers
       Case Sensitive
     Markdown
-      Live Preview
+      Live Preview in Tab
+      Multiple Previews
+      Dark/Light Mode
       LaTeX / KaTeX
+      Multi-line Math
       Mermaid Diagrams
       Code Highlighting
+      Preview Zoom
       PDF Export
     Remote
       SSH / SFTP
@@ -364,6 +415,7 @@ mindmap
       File Management
       Saved Connections
     Appearance
+      Hamburger Menu
       12 Color Themes
       Dark/Light Mode
       Separate GUI/Editor Fonts

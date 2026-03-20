@@ -2,23 +2,22 @@
 
 ## Overview
 
-TextEd is a Qt 6 Widgets application written in C++17. It follows a modular design where each major feature is encapsulated in its own class. The application uses `QPlainTextEdit` as the core editor widget, `QWebEngineView` for Markdown preview rendering, and `libssh2` for SSH/SFTP remote file access.
+TextEd is a Qt 6 Widgets application written in C++17. It follows a modular design where each major feature is encapsulated in its own class. The application uses `QPlainTextEdit` as the core editor widget, `QWebEngineView` (wrapped in a `QWidget`) for Markdown preview rendering, and `libssh2` for SSH/SFTP remote file access.
 
 ## Component Diagram
 
 ```
 MainWindow
 ├── QToolBar (hamburger menu ☰, right-aligned)
-├── QSplitter
-│   ├── QTabWidget (multi-document tabs)
-│   │   └── QWidget container (per tab)
-│   │       ├── Editor
-│   │       │   ├── LineNumberArea
-│   │       │   ├── ScrollBarOverlay (search match markers)
-│   │       │   ├── MarkdownHighlighter (for .md files)
-│   │       │   └── CodeHighlighter (for code files)
-│   │       └── Minimap (VS Code-style code overview)
-│   └── MarkdownPreview (QWebEngineView)
+├── QTabWidget (multi-document tabs)
+│   ├── QWidget container (per editor tab)
+│   │   ├── Editor
+│   │   │   ├── LineNumberArea
+│   │   │   ├── ScrollBarOverlay (search match markers)
+│   │   │   ├── MarkdownHighlighter (for .md files)
+│   │   │   └── CodeHighlighter (for code files)
+│   │   └── Minimap (VS Code-style code overview)
+│   └── MarkdownPreview (per preview tab, QWidget + QWebEngineView)
 ├── SearchBar (find & replace bar)
 ├── SshSession (SSH/SFTP connection)
 └── AppSettings / EditorTheme
@@ -31,7 +30,7 @@ MainWindow
 | File | Description |
 |---|---|
 | `main.cpp` | Application entry point, initializes QtWebEngine and opens files from command line arguments |
-| `MainWindow.h/cpp` | Main application window with hamburger menu, tab management, status bar, settings, SSH integration, session restore, recent files, auto-save, drag & drop |
+| `MainWindow.h/cpp` | Main application window with hamburger menu, tab management, multiple preview tabs, status bar, settings, SSH integration, session restore, recent files, auto-save, drag & drop, WebEngine warmup |
 | `Editor.h/cpp` | `QPlainTextEdit` subclass with line number gutter, current line highlighting, font zoom, theme support, search match highlighting, auto-indent, bracket matching |
 
 ### Search & Replace
@@ -57,7 +56,7 @@ MainWindow
 
 | File | Description |
 |---|---|
-| `MarkdownPreview.h/cpp` | `QWebEngineView` subclass that renders Markdown to HTML with KaTeX, Mermaid, and highlight.js. Supports PDF export. |
+| `MarkdownPreview.h/cpp` | `QWidget` containing a `QWebEngineView` with internal debounce timer (400ms). Converts Markdown to HTML with KaTeX math, Mermaid diagrams, highlight.js code blocks, tables, ordered/unordered lists, blockquotes, and strikethrough. Supports dark/light mode, zoom (Ctrl+/- and Ctrl+scroll), multi-line LaTeX, and PDF export. Resources are extracted to a shared temp directory with integrity checking. |
 
 ### File I/O
 
@@ -84,7 +83,7 @@ MainWindow
 
 ### Tab-based multi-document model
 
-Each tab contains a QWidget container with an `Editor` and optional `Minimap` in an HBoxLayout. A `TabData` struct stores per-tab state (file path, encoding, language, modified flag, preview visibility, remote file info). The `MainWindow` maintains a `QVector<TabData>` parallel to the `QTabWidget` indices. Editors are retrieved from tab containers via `findChild<Editor*>()`.
+Each editor tab contains a QWidget container with an `Editor` and optional `Minimap` in an HBoxLayout. A `TabData` struct stores per-tab state (file path, encoding, language, modified flag, remote file info, preview flag). The `MainWindow` maintains a `QVector<TabData>` parallel to the `QTabWidget` indices. Preview tabs have `isPreview = true` and are skipped by save/session/autosave logic.
 
 ### Hamburger menu
 
@@ -93,6 +92,22 @@ The traditional menu bar is replaced with a modern hamburger menu (☰) position
 ### Modification tracking
 
 File modification is tracked by comparing the current editor content against a saved baseline, stored as a Qt dynamic property `savedContent` on each `Editor` instance. When a file is opened or saved, `editor->setProperty("savedContent", editor->toPlainText())` captures the baseline. On every `contentsChanged` signal, the current text is compared against the baseline — if they match, the tab is marked clean (no asterisk). This approach correctly handles undo/redo: undoing all changes back to the original state clears the modified flag. Programmatic changes (theme application, highlighter setup, settings changes) are guarded by an `m_ignoreTextChanged` flag to prevent false modification detection.
+
+### Markdown preview as separate tabs
+
+Each markdown file can have its own preview tab, opened right next to the source tab. Multiple previews can be open simultaneously. Each `MarkdownPreview` instance stores a `sourceEditor` property pointing to the source editor widget. Live updates are achieved via a direct `connect(editor, textChanged, preview, ...)` signal — each preview has its own internal 400ms debounce timer. The preview renders to a temp HTML file and loads it via `QWebEngineView::load()` to avoid JavaScript string escaping issues. Dark/light mode is auto-detected from the editor theme.
+
+### WebEngine warmup
+
+On startup, a hidden 0x0 `QWebEngineView` loads `about:blank` and is deleted on completion. This pre-initializes the Chromium subprocess so that the first Markdown preview opens without a visible flicker.
+
+### Multi-line LaTeX math
+
+Before line-by-line markdown processing, code blocks and code spans are masked, then multi-line math expressions (`$$...$$` and `$...$` spanning multiple lines) are extracted into placeholders. After the line-by-line conversion, placeholders are restored as KaTeX spans (`<span class="katex-display">` / `<span class="katex-inline">`).
+
+### Context-aware zoom
+
+Ctrl+Plus/Minus and Ctrl+scroll are context-aware: when a preview tab is active, they zoom the preview (`QWebEngineView::setZoomFactor`); otherwise they zoom the editor font.
 
 ### Settings persistence
 
@@ -116,7 +131,7 @@ Auto-indent preserves the leading whitespace of the current line when pressing E
 
 ### Auto-save
 
-A `QTimer` periodically saves all modified tabs that have a file path (skipping untitled and remote files). The interval is configurable in Settings (5-600 seconds). The timer is stopped when auto-save is disabled.
+A `QTimer` periodically saves all modified tabs that have a file path (skipping untitled, remote, and preview tabs). The interval is configurable in Settings (5-600 seconds). The timer is stopped when auto-save is disabled.
 
 ### Drag & Drop
 
@@ -124,19 +139,20 @@ The main window accepts file drops via `dragEnterEvent`/`dropEvent`. Dropped fil
 
 ### Offline-first architecture
 
-All third-party rendering libraries (KaTeX, Mermaid.js, highlight.js) are embedded in the Qt resource system (`resources.qrc`). At runtime, `MarkdownPreview::deployResources()` extracts them to a `QTemporaryDir` so that `QWebEngineView` can load them via `file://` URLs. `LocalContentCanAccessRemoteUrls` is set to `false` to block any network requests. This ensures the application works without any network access.
+All third-party rendering libraries (KaTeX, Mermaid.js, highlight.js) are embedded in the Qt resource system (`resources.qrc`). At runtime, `MarkdownPreview::deployResources()` extracts them to a shared temp directory (`/tmp/text-ed-preview`) with integrity checking (re-extracts only if on-disk copy differs from bundled resource). `LocalContentCanAccessRemoteUrls` is set to `false` to block any network requests. This ensures the application works without any network access.
 
 ### Markdown preview rendering
 
-The preview uses a two-stage pipeline:
-1. `markdownToHtml()` - converts Markdown to HTML with inline processing (`processInline()` handles bold, italic, code, links, images, LaTeX placeholders)
-2. `buildHtml()` - wraps the body in a full HTML document with CSS, KaTeX, Mermaid, and highlight.js scripts
-
-The preview is updated via a debounced `QTimer` (300ms) to avoid excessive re-rendering during typing.
+The preview uses a multi-stage pipeline:
+1. **Math protection** — mask code blocks/spans, extract multi-line LaTeX into placeholders
+2. `markdownToHtml()` — line-by-line conversion with support for headings, bold, italic, code, strikethrough, links, images, lists (ordered/unordered), blockquotes, tables with alignment, horizontal rules, fenced code blocks, and mermaid blocks
+3. `buildHtml()` — wraps the body in a full HTML document with theme-aware CSS, KaTeX, Mermaid (with dark/default theme), and highlight.js scripts
+4. **Math restoration** — replace placeholders with KaTeX spans
+5. Write to temp file and load via `QWebEngineView::load()`
 
 ### Theme system
 
-`EditorTheme` defines colors for: background, foreground, current line, line numbers, selection, and 8 syntax categories (keyword, type, string, comment, number, function, preprocessor, operator). Themes are applied to the `Editor` palette, line number area, minimap background, and forwarded to `CodeHighlighter` which rebuilds its format rules. Dark themes also set a dark `QApplication::setPalette()` so that menus, tabs, status bar, and dialogs match the editor background. Theme colors are re-applied after every highlighter creation to ensure syntax colors are always correct (including on startup with restored sessions).
+`EditorTheme` defines colors for: background, foreground, current line, line numbers, selection, and 8 syntax categories (keyword, type, string, comment, number, function, preprocessor, operator). Themes are applied to the `Editor` palette, line number area, minimap background, and forwarded to `CodeHighlighter` which rebuilds its format rules. Dark themes also set a dark `QApplication::setPalette()` so that menus, tabs, status bar, and dialogs match the editor background. Preview dark mode is auto-updated when theme changes. Theme colors are re-applied after every highlighter creation to ensure syntax colors are always correct.
 
 ### Vertical ruler
 
