@@ -7,9 +7,12 @@ TextEd is a Qt 6 Widgets application written in C++17. It follows a modular desi
 ## Component Diagram
 
 ```
-MainWindow
-├── QToolBar (hamburger menu ☰, right-aligned)
-├── QTabWidget (multi-document tabs)
+MainWindow (frameless window)
+├── TitleBar (custom title bar)
+│   ├── QToolButton (hamburger menu ☰)
+│   ├── QTabBar (document tabs)
+│   └── Window controls (minimize, maximize, close)
+├── QTabWidget (multi-document content, tab bar hidden)
 │   ├── QWidget container (per editor tab)
 │   │   ├── Editor
 │   │   │   ├── LineNumberArea
@@ -30,7 +33,8 @@ MainWindow
 | File | Description |
 |---|---|
 | `main.cpp` | Application entry point, initializes QtWebEngine and opens files from command line arguments |
-| `MainWindow.h/cpp` | Main application window with hamburger menu, tab management, multiple preview tabs, status bar, settings, SSH integration, session restore, recent files, auto-save, drag & drop, WebEngine warmup |
+| `MainWindow.h/cpp` | Main application window (frameless) with custom title bar, tab management, multiple preview tabs, status bar, settings, SSH integration, session restore, recent files, auto-save, drag & drop, WebEngine warmup |
+| `TitleBar.h/cpp` | Custom title bar widget with hamburger menu (☰), QTabBar, window controls (minimize, maximize, close), mouse drag to move, double-click to maximize, theme-aware styling |
 | `Editor.h/cpp` | `QPlainTextEdit` subclass with line number gutter, current line highlighting, font zoom, theme support, search match highlighting, auto-indent, bracket matching |
 
 ### Search & Replace
@@ -85,9 +89,9 @@ MainWindow
 
 Each editor tab contains a QWidget container with an `Editor` and optional `Minimap` in an HBoxLayout. A `TabData` struct stores per-tab state (file path, encoding, language, modified flag, remote file info, preview flag). The `MainWindow` maintains a `QVector<TabData>` parallel to the `QTabWidget` indices. Preview tabs have `isPreview = true` and are skipped by save/session/autosave logic.
 
-### Hamburger menu
+### Custom title bar
 
-The traditional menu bar is replaced with a modern hamburger menu (☰) positioned on the right side of a toolbar. All menus (File, Edit, View, Remote, Preferences) are organized as submenus inside a single `QToolButton` with `InstantPopup` mode. The menu bar is hidden via `menuBar()->hide()`.
+The application uses a frameless window (`Qt::FramelessWindowHint`) with a custom `TitleBar` widget that combines the hamburger menu (☰), document tabs (`QTabBar`), and window controls (minimize, maximize, close) into a single 32px-high bar — similar to VS Code and Zed. The title bar supports mouse drag to move the window and double-click to maximize/restore. The `QTabWidget`'s built-in tab bar is hidden; tab state is synced between the title bar's `QTabBar` and the `QTabWidget` via signals. The traditional menu bar is hidden via `menuBar()->hide()`, and all menus are organized as submenus inside the hamburger button with `InstantPopup` mode.
 
 ### Modification tracking
 
@@ -152,7 +156,7 @@ The preview uses a multi-stage pipeline:
 
 ### Theme system
 
-`EditorTheme` defines colors for: background, foreground, current line, line numbers, selection, and 8 syntax categories (keyword, type, string, comment, number, function, preprocessor, operator). Themes are applied to the `Editor` palette, line number area, minimap background, and forwarded to `CodeHighlighter` which rebuilds its format rules. Dark themes also set a dark `QApplication::setPalette()` so that menus, tabs, status bar, and dialogs match the editor background. Preview dark mode is auto-updated when theme changes. Theme colors are re-applied after every highlighter creation to ensure syntax colors are always correct.
+`EditorTheme` defines colors for: background, foreground, current line, line numbers, selection, and 8 syntax categories (keyword, type, string, comment, number, function, preprocessor, operator). Themes are applied to the `Editor` palette, line number area, minimap background, and forwarded to `CodeHighlighter` which rebuilds its format rules. Dark themes also set a dark `QApplication::setPalette()` so that menus, status bar, and dialogs match the editor background. The custom title bar, scrollbars, and status bar combo boxes (language, encoding) are explicitly styled with theme colors via `setStyleSheet()` so they respond to every theme change. Preview dark mode is auto-updated when theme changes. Theme colors are re-applied after every highlighter creation to ensure syntax colors are always correct.
 
 ### Vertical ruler
 

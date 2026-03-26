@@ -10,6 +10,7 @@
 #include "SshSession.h"
 #include "SshConnectDialog.h"
 #include "RemoteFileBrowser.h"
+#include "TitleBar.h"
 
 #include <QMenuBar>
 #include <QStatusBar>
@@ -42,6 +43,8 @@
 
 MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
 {
+    setWindowFlags(Qt::FramelessWindowHint | Qt::Window);
+
     m_settings.editorFont = QFont("Monospace", 11);
     m_settings.guiFont = QApplication::font();
     loadSettings();
@@ -52,11 +55,25 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
     centralLayout->setContentsMargins(0, 0, 0, 0);
     centralLayout->setSpacing(0);
 
+    // Custom title bar
+    m_titleBar = new TitleBar(this);
+    centralLayout->addWidget(m_titleBar);
+    connect(m_titleBar, &TitleBar::minimizeRequested, this, &QWidget::showMinimized);
+    connect(m_titleBar, &TitleBar::maximizeRequested, this, [this]() {
+        isMaximized() ? showNormal() : showMaximized();
+    });
+    connect(m_titleBar, &TitleBar::closeRequested, this, &QWidget::close);
+
+    // Tab widget uses the title bar's tab bar
     m_tabWidget = new QTabWidget(this);
-    m_tabWidget->setTabsClosable(true);
+    m_tabWidget->setTabsClosable(false);  // tabs managed via title bar
     m_tabWidget->setMovable(false);
     m_tabWidget->setDocumentMode(true);
-    connect(m_tabWidget, &QTabWidget::tabCloseRequested, this, &MainWindow::closeTab);
+    m_tabWidget->tabBar()->hide();  // hide built-in tab bar
+
+    // Sync title bar tab bar with tab widget
+    connect(m_titleBar->tabBar(), &QTabBar::currentChanged, m_tabWidget, &QTabWidget::setCurrentIndex);
+    connect(m_titleBar->tabBar(), &QTabBar::tabCloseRequested, this, &MainWindow::closeTab);
     connect(m_tabWidget, &QTabWidget::currentChanged, this, &MainWindow::onTabChanged);
 
     centralLayout->addWidget(m_tabWidget, 1);
@@ -92,28 +109,7 @@ void MainWindow::setupMenus()
 {
     menuBar()->hide();
 
-    auto *toolbar = new QToolBar(this);
-    toolbar->setMovable(false);
-    toolbar->setFloatable(false);
-    toolbar->setIconSize(QSize(20, 20));
-    toolbar->setStyleSheet(
-        "QToolBar { border: none; padding: 2px; spacing: 2px; }"
-    );
-    addToolBar(toolbar);
-
-    auto *spacer = new QWidget(this);
-    spacer->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
-    toolbar->addWidget(spacer);
-
-    m_hamburgerButton = new QToolButton(this);
-    m_hamburgerButton->setText("\u2630");
-    m_hamburgerButton->setFont(QFont(m_hamburgerButton->font().family(), 16));
-    m_hamburgerButton->setPopupMode(QToolButton::InstantPopup);
-    m_hamburgerButton->setStyleSheet(
-        "QToolButton { border: none; padding: 4px 8px; font-size: 18px; }"
-        "QToolButton::menu-indicator { image: none; }"
-    );
-    toolbar->addWidget(m_hamburgerButton);
+    m_hamburgerButton = m_titleBar->hamburgerButton();
 
     auto *menu = new QMenu(this);
     menu->setStyleSheet(
@@ -280,9 +276,12 @@ int MainWindow::createTab(const QString &title)
     m_minimaps.insert(editor, minimap);
 
     TabData td;
-    int index = m_tabWidget->addTab(container, title.isEmpty() ? tr("Untitled") : title);
+    QString tabTitle = title.isEmpty() ? tr("Untitled") : title;
+    int index = m_tabWidget->addTab(container, tabTitle);
+    m_titleBar->tabBar()->addTab(tabTitle);
     m_tabs.insert(index, td);
     m_tabWidget->setCurrentIndex(index);
+    m_titleBar->tabBar()->setCurrentIndex(index);
     return index;
 }
 
@@ -450,6 +449,7 @@ void MainWindow::closeTab(int index)
         disconnectEditor(editor);
     }
     m_tabWidget->removeTab(index);
+    m_titleBar->tabBar()->removeTab(index);
     m_tabs.remove(index);
 
     if (w) w->deleteLater();
@@ -464,6 +464,10 @@ void MainWindow::closeTab(int index)
 
 void MainWindow::onTabChanged(int index)
 {
+    // Sync title bar tab selection
+    if (m_titleBar->tabBar()->currentIndex() != index)
+        m_titleBar->tabBar()->setCurrentIndex(index);
+
     if (isPreviewTab(index)) {
         m_previewAction->blockSignals(true);
         m_previewAction->setChecked(true);
@@ -688,7 +692,9 @@ void MainWindow::openPreviewTab(int sourceIndex)
     QString srcName = srcTd.filePath.isEmpty() ? tr("Untitled") : QFileInfo(srcTd.filePath).fileName();
 
     int insertAt = sourceIndex + 1;
-    int previewIdx = m_tabWidget->insertTab(insertAt, preview, tr("Preview: %1").arg(srcName));
+    QString previewTitle = tr("Preview: %1").arg(srcName);
+    int previewIdx = m_tabWidget->insertTab(insertAt, preview, previewTitle);
+    m_titleBar->tabBar()->insertTab(insertAt, previewTitle);
     m_tabWidget->setTabToolTip(previewIdx, tr("Markdown Preview"));
     m_tabWidget->setTabIcon(previewIdx,
         style()->standardIcon(QStyle::SP_FileDialogDetailedView));
@@ -711,6 +717,7 @@ void MainWindow::closePreviewTab(int previewIndex)
     auto *preview = qobject_cast<MarkdownPreview *>(m_tabWidget->widget(previewIndex));
 
     m_tabWidget->removeTab(previewIndex);
+    m_titleBar->tabBar()->removeTab(previewIndex);
     m_tabs.remove(previewIndex);
 
     if (preview) {
@@ -780,7 +787,7 @@ void MainWindow::addPreviewButton(int tabIndex)
             }
         }
     });
-    m_tabWidget->tabBar()->setTabButton(tabIndex, QTabBar::LeftSide, btn);
+    m_titleBar->tabBar()->setTabButton(tabIndex, QTabBar::LeftSide, btn);
 }
 
 void MainWindow::openSettings()
@@ -849,6 +856,39 @@ void MainWindow::applyThemeToApp(const EditorTheme &theme)
     bool isDark = theme.background.lightnessF() < 0.5;
     for (auto *mdp : m_mdPreviews)
         mdp->setDarkMode(isDark);
+
+    // Style the custom title bar with theme colors
+    m_titleBar->applyTheme(theme.lineNumberBg, theme.lineNumberFg,
+                           theme.background, theme.foreground, theme.selection);
+
+    m_tabWidget->setStyleSheet("QTabWidget::pane { border: none; }");
+
+    // Style combo boxes in status bar with theme colors
+    QString comboStyle = QString(
+        "QComboBox { background: %1; color: %2; border: none; padding: 2px 6px; }"
+        "QComboBox:hover { background: %3; }"
+        "QComboBox::drop-down { border: none; }"
+        "QComboBox QAbstractItemView { background: %1; color: %2; selection-background-color: %3; }"
+    ).arg(theme.lineNumberBg.name(), theme.foreground.name(), theme.selection.name());
+    m_languageCombo->setStyleSheet(comboStyle);
+    m_encodingCombo->setStyleSheet(comboStyle);
+
+    // Style scrollbars with theme colors
+    QColor sbBg = theme.lineNumberBg;
+    QColor sbHandle = theme.lineNumberFg;
+    QColor sbHover = theme.selection;
+    qApp->setStyleSheet(QString(
+        "QScrollBar:vertical { background: %1; width: 12px; margin: 0; }"
+        "QScrollBar::handle:vertical { background: %2; min-height: 20px; border-radius: 3px; margin: 2px; }"
+        "QScrollBar::handle:vertical:hover { background: %3; }"
+        "QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }"
+        "QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical { background: none; }"
+        "QScrollBar:horizontal { background: %1; height: 12px; margin: 0; }"
+        "QScrollBar::handle:horizontal { background: %2; min-width: 20px; border-radius: 3px; margin: 2px; }"
+        "QScrollBar::handle:horizontal:hover { background: %3; }"
+        "QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal { width: 0; }"
+        "QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal { background: none; }"
+    ).arg(sbBg.name(), sbHandle.name(), sbHover.name()));
 
     if (isDark) {
         QPalette darkPalette;
@@ -927,6 +967,8 @@ void MainWindow::updateTabTitle(int index)
     if (td.isRemote) name = "[SSH] " + name;
     if (td.modified) name = "* " + name;
     m_tabWidget->setTabText(index, name);
+    if (index < m_titleBar->tabBar()->count())
+        m_titleBar->tabBar()->setTabText(index, name);
 }
 
 void MainWindow::updateWindowTitle()
@@ -939,6 +981,7 @@ void MainWindow::updateWindowTitle()
         title = tr("Untitled") + " - TextEd";
     if (td && td->modified) title = "* " + title;
     setWindowTitle(title);
+    m_titleBar->titleLabel()->setText(title);
 }
 
 void MainWindow::sshConnect()

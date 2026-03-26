@@ -36,6 +36,8 @@ add_executable(text-ed
     src/SearchBar.h
     src/Minimap.cpp
     src/Minimap.h
+    src/TitleBar.cpp
+    src/TitleBar.h
     resources.qrc
 )
 

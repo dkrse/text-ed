@@ -14,3 +14,5 @@ compile_commands.json
 *.user
 *.autosave
 LLM/
+# Vibe Coder project data
+.LLM/

@@ -2,6 +2,23 @@
 
 All notable changes to TextEd are documented in this file.
 
+## [0.6.0] - 2026-03-26
+
+### Added
+
+- **Custom title bar** - VS Code/Zed-style frameless window with integrated hamburger menu (☰), document tabs, and window controls (minimize, maximize, close) in a single 32px-high bar; supports drag-to-move and double-click to maximize/restore
+- **Theme-aware scrollbars** - vertical and horizontal scrollbars are styled with theme colors (background, handle, hover) via application-wide stylesheet
+- **Theme-aware status bar combos** - language and encoding combo boxes in the status bar now follow the active theme
+
+### Changed
+
+- **Title bar replaces toolbar + tab bar** - removed the separate QToolBar and QTabWidget tab bar; both are now unified into the custom TitleBar widget, saving vertical space
+- **Frameless window** - the application window uses `Qt::FramelessWindowHint` with custom window chrome
+
+### Removed
+
+- **QToolBar** - replaced by custom TitleBar; hamburger menu and tabs are now part of the title bar
+
 ## [0.5.0] - 2026-03-20
 
 ### Added

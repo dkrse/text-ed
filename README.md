@@ -5,7 +5,7 @@ A fast, feature-rich text editor built with Qt 6 and C++17. Designed for efficie
 ## Features
 
 - **Fast file handling** - chunked reading with progress indicator for large files (4 MB chunks)
-- **Hamburger menu** - modern compact menu (☰) with all actions accessible from a single button
+- **Custom title bar** - VS Code/Zed-style frameless window with integrated hamburger menu (☰), tabs, and window controls (minimize, maximize, close) in a single compact bar
 - **Tab-based interface** - multi-document editing with per-tab state
 - **Session restore** - remembers open files and restores them on next launch
 - **Recent files** - quick access to last 5 opened files (File > Recent Files)
@@ -24,7 +24,7 @@ A fast, feature-rich text editor built with Qt 6 and C++17. Designed for efficie
 - **PDF export** - export the Markdown preview to PDF (View > Export Preview to PDF)
 - **Syntax highlighting** - 28 languages including C/C++, Python, JavaScript, Rust, Go, Java, Assembly, and more
 - **Character encoding** - UTF-8, UTF-16 BE/LE, UTF-32 BE/LE, Latin-1, System; auto-detection via BOM
-- **Color themes** - 12 built-in themes (Default Light, Solarized Light, Monokai, Dracula, One Dark, Nord, Gruvbox Dark/Light, Tomorrow Night, GitHub Dark, Catppuccin Mocha/Latte)
+- **Color themes** - 12 built-in themes (Default Light, Solarized Light, Monokai, Dracula, One Dark, Nord, Gruvbox Dark/Light, Tomorrow Night, GitHub Dark, Catppuccin Mocha/Latte); theme applies to all UI elements including title bar, tabs, scrollbars, and status bar combo boxes
 - **SSH remote editing** - connect to remote servers via SSH/SFTP, browse and edit files, create/rename/delete remote files and directories, save connection profiles (passwords are never stored)
 - **Fully offline** - all rendering resources (KaTeX, Mermaid, highlight.js) are bundled, no internet required
 - **Font zoom** - Ctrl+Plus / Ctrl+Minus (context-aware: zooms preview when preview tab is active, editor otherwise)

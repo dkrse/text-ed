@@ -7,10 +7,16 @@ Visual diagrams for TextEd architecture, features, and usage flows.
 ```mermaid
 graph TB
     subgraph MainWindow
+        TB[TitleBar]
         TW[QTabWidget]
         SB[SearchBar]
         STB[StatusBar]
-        HM[Hamburger Menu]
+    end
+
+    subgraph TitleBar
+        HM[Hamburger Menu ☰]
+        TBR[QTabBar]
+        WC[Window Controls]
     end
 
     subgraph "Editor Tab (per file)"
@@ -74,6 +80,7 @@ graph TB
 ```mermaid
 classDiagram
     QMainWindow <|-- MainWindow
+    QWidget <|-- TitleBar
     QPlainTextEdit <|-- Editor
     QWidget <|-- MarkdownPreview
     QSyntaxHighlighter <|-- CodeHighlighter
@@ -85,6 +92,7 @@ classDiagram
     QDialog <|-- SshConnectDialog
     QDialog <|-- RemoteFileBrowser
 
+    MainWindow --> TitleBar : custom title bar
     MainWindow --> Editor : manages tabs
     MainWindow --> Minimap : per editor
     MainWindow --> MarkdownPreview : per md file
@@ -100,7 +108,18 @@ classDiagram
 
     MarkdownPreview --> QWebEngineView : contains
 
+    class TitleBar {
+        -QTabBar* m_tabBar
+        -QToolButton* m_hamburgerButton
+        -QToolButton* m_minButton
+        -QToolButton* m_maxButton
+        -QToolButton* m_closeButton
+        -QLabel* m_titleLabel
+        +applyTheme(bg, fg, activeBg, activeFg, hoverBg)
+    }
+
     class MainWindow {
+        -TitleBar* m_titleBar
         -QTabWidget* m_tabWidget
         -QVector~TabData~ m_tabs
         -QList~MarkdownPreview*~ m_mdPreviews
@@ -360,11 +379,14 @@ flowchart TB
         MMP[Minimap]
         CHL[CodeHighlighter formats]
         MPV[MarkdownPreview dark/light]
+        TBR[TitleBar + tabs + window controls]
+        SBR[Scrollbars]
+        CMB[Status bar combos]
         AP[QApplication palette - dark themes]
     end
 
     L1 & D1 --> EditorTheme
-    EditorTheme --> EP & LNA & MMP & CHL & MPV & AP
+    EditorTheme --> EP & LNA & MMP & CHL & MPV & TBR & SBR & CMB & AP
 ```
 
 ## Application Feature Map
@@ -415,9 +437,11 @@ mindmap
       File Management
       Saved Connections
     Appearance
+      Custom Title Bar
       Hamburger Menu
       12 Color Themes
       Dark/Light Mode
+      Theme-aware Scrollbars
       Separate GUI/Editor Fonts
       Configurable Settings
 ```

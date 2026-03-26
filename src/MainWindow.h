@@ -18,6 +18,7 @@ class QAction;
 class QComboBox;
 class QTimer;
 class QToolButton;
+class TitleBar;
 
 struct TabData {
     QString filePath;
@@ -134,5 +135,6 @@ private:
     static constexpr int MaxRecentFiles = 5;
 
     QToolButton *m_hamburgerButton = nullptr;
+    TitleBar *m_titleBar = nullptr;
     bool m_ignoreTextChanged = false;
 };
