@@ -9,6 +9,7 @@
 TitleBar::TitleBar(QWidget *parent) : QWidget(parent)
 {
     setFixedHeight(32);
+    setAttribute(Qt::WA_StyledBackground, true);
 
     auto *layout = new QHBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);
@@ -35,10 +36,16 @@ TitleBar::TitleBar(QWidget *parent) : QWidget(parent)
     m_titleLabel->setAlignment(Qt::AlignCenter);
     m_titleLabel->hide();
 
-    // Spacer
-    layout->addStretch();
+    // Drag spacer — catches mouse events for window dragging
+    m_dragSpacer = new QWidget(this);
+    m_dragSpacer->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
+    m_dragSpacer->installEventFilter(this);
+    layout->addWidget(m_dragSpacer);
     layout->addWidget(m_titleLabel);
-    layout->addStretch();
+    auto *spacer2 = new QWidget(this);
+    spacer2->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
+    spacer2->installEventFilter(this);
+    layout->addWidget(spacer2);
 
     // Window control buttons
     m_minButton = new QToolButton(this);
@@ -95,6 +102,27 @@ void TitleBar::applyTheme(const QColor &bg, const QColor &fg, const QColor &acti
     m_titleLabel->setStyleSheet(QString("QLabel { color: %1; }").arg(baseFg));
 }
 
+bool TitleBar::eventFilter(QObject *obj, QEvent *event)
+{
+    // Handle drag on spacer widgets
+    if (event->type() == QEvent::MouseButtonPress) {
+        auto *me = static_cast<QMouseEvent *>(event);
+        if (me->button() == Qt::LeftButton) {
+            if (auto *win = window()->windowHandle())
+                win->startSystemMove();
+            return true;
+        }
+    }
+    if (event->type() == QEvent::MouseButtonDblClick) {
+        auto *me = static_cast<QMouseEvent *>(event);
+        if (me->button() == Qt::LeftButton) {
+            emit maximizeRequested();
+            return true;
+        }
+    }
+    return QWidget::eventFilter(obj, event);
+}
+
 void TitleBar::mouseDoubleClickEvent(QMouseEvent *event)
 {
     if (event->button() == Qt::LeftButton)
@@ -104,24 +132,10 @@ void TitleBar::mouseDoubleClickEvent(QMouseEvent *event)
 void TitleBar::mousePressEvent(QMouseEvent *event)
 {
     if (event->button() == Qt::LeftButton) {
-        m_dragging = true;
-        m_dragPos = event->globalPosition().toPoint() - window()->frameGeometry().topLeft();
+        if (auto *win = window()->windowHandle())
+            win->startSystemMove();
     }
 }
 
-void TitleBar::mouseMoveEvent(QMouseEvent *event)
-{
-    if (m_dragging && (event->buttons() & Qt::LeftButton)) {
-        if (window()->isMaximized()) {
-            window()->showNormal();
-            // Reposition so cursor stays proportionally on the title bar
-            m_dragPos = QPoint(width() / 2, height() / 2);
-        }
-        window()->move(event->globalPosition().toPoint() - m_dragPos);
-    }
-}
-
-void TitleBar::mouseReleaseEvent(QMouseEvent *)
-{
-    m_dragging = false;
-}
+void TitleBar::mouseMoveEvent(QMouseEvent *) {}
+void TitleBar::mouseReleaseEvent(QMouseEvent *) {}

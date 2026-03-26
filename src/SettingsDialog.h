@@ -34,6 +34,9 @@ public:
     explicit SettingsDialog(const AppSettings &settings, QWidget *parent = nullptr);
     AppSettings settings() const;
 
+protected:
+    bool eventFilter(QObject *obj, QEvent *event) override;
+
 private:
     QWidget *createEditorPage();
     QWidget *createAppearancePage();

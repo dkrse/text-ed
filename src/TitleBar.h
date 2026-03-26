@@ -25,6 +25,7 @@ signals:
     void closeRequested();
 
 protected:
+    bool eventFilter(QObject *obj, QEvent *event) override;
     void mouseDoubleClickEvent(QMouseEvent *event) override;
     void mousePressEvent(QMouseEvent *event) override;
     void mouseMoveEvent(QMouseEvent *event) override;
@@ -37,6 +38,5 @@ private:
     QToolButton *m_maxButton;
     QToolButton *m_closeButton;
     QLabel *m_titleLabel;
-    QPoint m_dragPos;
-    bool m_dragging = false;
+    QWidget *m_dragSpacer;
 };

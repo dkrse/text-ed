@@ -43,6 +43,7 @@ void ScrollBarOverlay::paintEvent(QPaintEvent *)
 
 Editor::Editor(QWidget *parent) : QPlainTextEdit(parent)
 {
+    setFrameShape(QFrame::NoFrame);
     m_lineNumberArea = new LineNumberArea(this);
     m_scrollBarOverlay = new ScrollBarOverlay(this);
 

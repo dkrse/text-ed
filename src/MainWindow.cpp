@@ -44,11 +44,19 @@
 MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
 {
     setWindowFlags(Qt::FramelessWindowHint | Qt::Window);
+    setStyleSheet("QMainWindow { border: none; }");
 
     m_settings.editorFont = QFont("Monospace", 11);
     m_settings.guiFont = QApplication::font();
     loadSettings();
     QApplication::setFont(m_settings.guiFont);
+
+    // Set window background early to avoid white flash on dark themes
+    auto earlyTheme = EditorTheme::themeByName(m_settings.themeName);
+    QPalette earlyPal = palette();
+    earlyPal.setColor(QPalette::Window, earlyTheme.lineNumberBg);
+    earlyPal.setColor(QPalette::Base, earlyTheme.background);
+    setPalette(earlyPal);
 
     auto *centralContainer = new QWidget(this);
     auto *centralLayout = new QVBoxLayout(centralContainer);
@@ -69,6 +77,7 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
     m_tabWidget->setTabsClosable(false);  // tabs managed via title bar
     m_tabWidget->setMovable(false);
     m_tabWidget->setDocumentMode(true);
+    m_tabWidget->setStyleSheet("QTabWidget::pane { border: none; margin: 0; padding: 0; }");
     m_tabWidget->tabBar()->hide();  // hide built-in tab bar
 
     // Sync title bar tab bar with tab widget
@@ -888,7 +897,12 @@ void MainWindow::applyThemeToApp(const EditorTheme &theme)
         "QScrollBar::handle:horizontal:hover { background: %3; }"
         "QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal { width: 0; }"
         "QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal { background: none; }"
-    ).arg(sbBg.name(), sbHandle.name(), sbHover.name()));
+        "#dialogTitleBar { background: %4; }"
+        "#dialogTitleBar QLabel { color: %5; font-weight: bold; }"
+        "#dialogCloseBtn { border: none; background: %4; color: %5; font-size: 14px; }"
+        "#dialogCloseBtn:hover { background: #e81123; color: white; }"
+    ).arg(sbBg.name(), sbHandle.name(), sbHover.name(),
+          theme.lineNumberBg.name(), theme.foreground.name()));
 
     if (isDark) {
         QPalette darkPalette;

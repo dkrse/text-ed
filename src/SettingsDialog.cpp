@@ -10,12 +10,38 @@
 #include <QCheckBox>
 #include <QComboBox>
 #include <QDialogButtonBox>
+#include <QLabel>
+#include <QToolButton>
+#include <QMouseEvent>
+#include <QWindow>
 
 SettingsDialog::SettingsDialog(const AppSettings &settings, QWidget *parent)
     : QDialog(parent), m_original(settings)
 {
-    setWindowTitle(tr("Settings"));
+    setWindowFlags(Qt::FramelessWindowHint | Qt::Dialog);
     setMinimumSize(450, 450);
+
+    // Custom title bar
+    auto *titleBar = new QWidget(this);
+    titleBar->setFixedHeight(32);
+    titleBar->setObjectName("dialogTitleBar");
+    auto *titleLayout = new QHBoxLayout(titleBar);
+    titleLayout->setContentsMargins(10, 0, 0, 0);
+    titleLayout->setSpacing(0);
+
+    auto *titleLabel = new QLabel(tr("Settings"), titleBar);
+    titleLayout->addWidget(titleLabel);
+    titleLayout->addStretch();
+
+    auto *closeBtn = new QToolButton(titleBar);
+    closeBtn->setText("\u2715");
+    closeBtn->setFixedSize(46, 32);
+    closeBtn->setObjectName("dialogCloseBtn");
+    connect(closeBtn, &QToolButton::clicked, this, &QDialog::reject);
+    titleLayout->addWidget(closeBtn);
+
+    // Make title bar draggable
+    titleBar->installEventFilter(this);
 
     auto *tabs = new QTabWidget(this);
     tabs->addTab(createEditorPage(), tr("Editor"));
@@ -26,7 +52,10 @@ SettingsDialog::SettingsDialog(const AppSettings &settings, QWidget *parent)
     connect(buttons, &QDialogButtonBox::rejected, this, &QDialog::reject);
 
     auto *layout = new QVBoxLayout(this);
-    layout->addWidget(tabs);
+    layout->setContentsMargins(0, 0, 0, 0);
+    layout->setSpacing(0);
+    layout->addWidget(titleBar);
+    layout->addWidget(tabs, 1);
     layout->addWidget(buttons);
 }
 
@@ -162,6 +191,21 @@ QWidget *SettingsDialog::createAppearancePage()
     layout->addStretch();
 
     return page;
+}
+
+bool SettingsDialog::eventFilter(QObject *obj, QEvent *event)
+{
+    if (obj->objectName() == "dialogTitleBar") {
+        if (event->type() == QEvent::MouseButtonPress) {
+            auto *me = static_cast<QMouseEvent *>(event);
+            if (me->button() == Qt::LeftButton) {
+                if (auto *win = windowHandle())
+                    win->startSystemMove();
+                return true;
+            }
+        }
+    }
+    return QDialog::eventFilter(obj, event);
 }
 
 AppSettings SettingsDialog::settings() const
