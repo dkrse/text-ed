@@ -1,6 +1,8 @@
 <RCC>
   <qresource prefix="/">
     <file>resources/hljs/github.min.css</file>
+    <file>resources/hljs/hljs-dark.min.css</file>
+    <file>resources/hljs/hljs-light.min.css</file>
     <file>resources/hljs/highlight.min.js</file>
     <file>resources/katex/fonts/KaTeX_AMS-Regular.woff2</file>
     <file>resources/katex/fonts/KaTeX_Caligraphic-Bold.woff2</file>

@@ -28,6 +28,10 @@
 #include <QStyle>
 #include <QVBoxLayout>
 #include <QHBoxLayout>
+#include <QFormLayout>
+#include <QDialogButtonBox>
+#include <QSpinBox>
+#include <QCheckBox>
 #include <QShortcut>
 #include <QSettings>
 #include <QCloseEvent>
@@ -44,12 +48,15 @@
 MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
 {
     setWindowFlags(Qt::FramelessWindowHint | Qt::Window);
-    setStyleSheet("QMainWindow { border: none; }");
 
     m_settings.editorFont = QFont("Monospace", 11);
     m_settings.guiFont = QApplication::font();
     loadSettings();
     QApplication::setFont(m_settings.guiFont);
+
+    // Load themes from user config directory
+    QString themesDir = QDir::homePath() + "/.config/ed/themes";
+    EditorTheme::loadFromDirectory(themesDir);
 
     // Set window background early to avoid white flash on dark themes
     auto earlyTheme = EditorTheme::themeByName(m_settings.themeName);
@@ -196,10 +203,47 @@ void MainWindow::setupMenus()
         }
         QString path = QFileDialog::getSaveFileName(this, tr("Export to PDF"), {},
                             tr("PDF Files (*.pdf)"));
-        if (!path.isEmpty()) {
-            if (!path.endsWith(".pdf", Qt::CaseInsensitive)) path += ".pdf";
-            preview->exportToPdf(path);
-        }
+        if (path.isEmpty()) return;
+        if (!path.endsWith(".pdf", Qt::CaseInsensitive)) path += ".pdf";
+
+        // PDF options dialog
+        QDialog dlg(this);
+        dlg.setWindowTitle(tr("PDF Export Options"));
+        auto *fl = new QFormLayout(&dlg);
+
+        auto *marginLeft = new QSpinBox(&dlg);
+        marginLeft->setRange(0, 50); marginLeft->setValue(15); marginLeft->setSuffix(" mm");
+        fl->addRow(tr("Left Margin:"), marginLeft);
+
+        auto *marginRight = new QSpinBox(&dlg);
+        marginRight->setRange(0, 50); marginRight->setValue(15); marginRight->setSuffix(" mm");
+        fl->addRow(tr("Right Margin:"), marginRight);
+
+        auto *pageNum = new QComboBox(&dlg);
+        pageNum->addItem(tr("None"), "none");
+        pageNum->addItem(tr("Page number"), "page");
+        pageNum->addItem(tr("Page / Total"), "page/total");
+        fl->addRow(tr("Page Numbers:"), pageNum);
+
+        auto *orientation = new QComboBox(&dlg);
+        orientation->addItem(tr("Portrait"), false);
+        orientation->addItem(tr("Landscape"), true);
+        fl->addRow(tr("Orientation:"), orientation);
+
+        auto *pageBorder = new QCheckBox(tr("Draw page border"), &dlg);
+        fl->addRow(pageBorder);
+
+        auto *buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dlg);
+        fl->addRow(buttons);
+        connect(buttons, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
+        connect(buttons, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+
+        if (dlg.exec() != QDialog::Accepted) return;
+
+        preview->exportToPdf(path, marginLeft->value(), marginRight->value(),
+                             pageNum->currentData().toString(),
+                             orientation->currentData().toBool(),
+                             pageBorder->isChecked());
     });
 
     // --- Remote ---
@@ -801,6 +845,10 @@ void MainWindow::addPreviewButton(int tabIndex)
 
 void MainWindow::openSettings()
 {
+    // Reload themes from disk (picks up any external changes)
+    QString themesDir = QDir::homePath() + "/.config/ed/themes";
+    EditorTheme::loadFromDirectory(themesDir);
+
     SettingsDialog dlg(m_settings, this);
     if (dlg.exec() == QDialog::Accepted) {
         AppSettings newSettings = dlg.settings();
@@ -851,17 +899,6 @@ void MainWindow::applySettingsToAllEditors()
 
 void MainWindow::applyThemeToApp(const EditorTheme &theme)
 {
-    // Apply theme to all editors and their highlighters.
-    // Disconnect editors first — applyTheme triggers rehighlight which
-    // would fire textChanged and falsely mark tabs as modified.
-    m_ignoreTextChanged = true;
-    for (int i = 0; i < m_tabWidget->count(); ++i) {
-        auto *editor = m_tabWidget->widget(i)->findChild<Editor *>();
-        if (editor) editor->applyTheme(theme);
-    }
-    m_ignoreTextChanged = false;
-
-    // Update preview dark mode
     bool isDark = theme.background.lightnessF() < 0.5;
     for (auto *mdp : m_mdPreviews)
         mdp->setDarkMode(isDark);
@@ -882,11 +919,15 @@ void MainWindow::applyThemeToApp(const EditorTheme &theme)
     m_languageCombo->setStyleSheet(comboStyle);
     m_encodingCombo->setStyleSheet(comboStyle);
 
-    // Style scrollbars with theme colors
+    // Style all widgets via one setStyleSheet on main window (NOT qApp — that kills palettes)
     QColor sbBg = theme.lineNumberBg;
     QColor sbHandle = theme.lineNumberFg;
     QColor sbHover = theme.selection;
-    qApp->setStyleSheet(QString(
+    setStyleSheet(QString(
+        "QMainWindow { border: none; background: %6; }"
+        "QStatusBar { background: %6; color: %7; }"
+        "QStatusBar QLabel { color: %7; }"
+        "QPlainTextEdit { background: %8; color: %7; }"
         "QScrollBar:vertical { background: %1; width: 12px; margin: 0; }"
         "QScrollBar::handle:vertical { background: %2; min-height: 20px; border-radius: 3px; margin: 2px; }"
         "QScrollBar::handle:vertical:hover { background: %3; }"
@@ -902,7 +943,9 @@ void MainWindow::applyThemeToApp(const EditorTheme &theme)
         "#dialogCloseBtn { border: none; background: %4; color: %5; font-size: 14px; }"
         "#dialogCloseBtn:hover { background: #e81123; color: white; }"
     ).arg(sbBg.name(), sbHandle.name(), sbHover.name(),
-          theme.lineNumberBg.name(), theme.foreground.name()));
+          theme.lineNumberBg.name(), theme.foreground.name(),
+          theme.lineNumberBg.name(), theme.foreground.name(),
+          theme.background.name()));
 
     if (isDark) {
         QPalette darkPalette;
@@ -926,6 +969,19 @@ void MainWindow::applyThemeToApp(const EditorTheme &theme)
     } else {
         QApplication::setPalette(QApplication::style()->standardPalette());
     }
+
+    // Apply theme to all editors AFTER global palette is set
+    // (QApplication::setPalette overrides widget palettes, so editors must come last)
+    m_ignoreTextChanged = true;
+    for (int i = 0; i < m_tabWidget->count(); ++i) {
+        auto *editor = m_tabWidget->widget(i)->findChild<Editor *>();
+        if (editor) editor->applyTheme(theme);
+    }
+    m_ignoreTextChanged = false;
+
+    // Force repaint of all widgets
+    for (auto *w : findChildren<QWidget *>())
+        w->update();
 }
 
 void MainWindow::updateStatusBar()
@@ -1350,6 +1406,7 @@ void MainWindow::saveSettings()
     s.setValue("minimap", m_settings.minimap);
     s.setValue("showRuler", m_settings.showRuler);
     s.setValue("rulerColumn", m_settings.rulerColumn);
+    s.setValue("lineSpacing", m_settings.lineSpacing);
     s.endGroup();
 }
 
@@ -1381,6 +1438,7 @@ void MainWindow::loadSettings()
     m_settings.minimap = s.value("minimap", m_settings.minimap).toBool();
     m_settings.showRuler = s.value("showRuler", m_settings.showRuler).toBool();
     m_settings.rulerColumn = s.value("rulerColumn", m_settings.rulerColumn).toInt();
+    m_settings.lineSpacing = s.value("lineSpacing", m_settings.lineSpacing).toDouble();
     s.endGroup();
 }
 

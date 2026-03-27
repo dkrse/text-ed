@@ -16,6 +16,9 @@ public:
     explicit SshConnectDialog(QWidget *parent = nullptr);
     SshHostInfo hostInfo() const;
 
+protected:
+    bool eventFilter(QObject *obj, QEvent *event) override;
+
 private slots:
     void saveConnection();
     void deleteConnection();

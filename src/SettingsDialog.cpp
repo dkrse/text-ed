@@ -151,6 +151,22 @@ QWidget *SettingsDialog::createEditorPage()
     behaviorLayout->addLayout(rulerLayout);
     connect(m_showRuler, &QCheckBox::toggled, m_rulerColumn, &QSpinBox::setEnabled);
 
+    auto *lineSpacingLayout = new QFormLayout;
+    m_lineSpacingCombo = new QComboBox;
+    m_lineSpacingCombo->addItem("1.0", 1.0);
+    m_lineSpacingCombo->addItem("1.2", 1.2);
+    m_lineSpacingCombo->addItem("1.5", 1.5);
+    m_lineSpacingCombo->addItem("1.8", 1.8);
+    m_lineSpacingCombo->addItem("2.0", 2.0);
+    for (int i = 0; i < m_lineSpacingCombo->count(); ++i) {
+        if (qFuzzyCompare(m_lineSpacingCombo->itemData(i).toDouble(), m_original.lineSpacing)) {
+            m_lineSpacingCombo->setCurrentIndex(i);
+            break;
+        }
+    }
+    lineSpacingLayout->addRow(tr("Line Spacing:"), m_lineSpacingCombo);
+    behaviorLayout->addLayout(lineSpacingLayout);
+
     layout->addWidget(behaviorGroup);
     layout->addStretch();
 
@@ -234,6 +250,7 @@ AppSettings SettingsDialog::settings() const
     s.minimap = m_minimap->isChecked();
     s.showRuler = m_showRuler->isChecked();
     s.rulerColumn = m_rulerColumn->value();
+    s.lineSpacing = m_lineSpacingCombo->currentData().toDouble();
 
     return s;
 }

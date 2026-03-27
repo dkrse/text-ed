@@ -2,6 +2,39 @@
 
 All notable changes to TextEd are documented in this file.
 
+## [0.7.0] - 2026-03-27
+
+### Added
+
+- **Line spacing** - configurable line spacing (1.0, 1.2, 1.5, 1.8, 2.0) via custom `SpacedDocumentLayout` that multiplies block heights; selectable in Settings > Editor
+- **cmark-gfm Markdown parser** - replaced hand-written regex-based parser with GitHub's cmark-gfm library for spec-compliant Markdown rendering with GFM extensions (table, strikethrough, autolink, tagfilter)
+- **Advanced PDF export** - export dialog with configurable left/right margins (mm), page numbering (none / page / page+total), orientation (portrait/landscape), and page borders; post-processing via QPdfDocument + QPdfWriter for page numbers and borders
+- **Dark/light Markdown highlighting** - `MarkdownHighlighter` now supports dark and light themes with `setDarkTheme()` and `buildRules()`; colors match common dark theme conventions (One Dark inspired)
+- **Highlight.js dark/light CSS** - preview now uses separate `hljs-dark.min.css` and `hljs-light.min.css` stylesheets that switch with the theme
+- **Application icon** - SVG icon (`resources/icon.svg`) with stylized "E" and cursor accent
+- **Desktop file** - `.desktop` entry for Linux application launchers
+- **Tab close buttons** - tabs now show close (×) buttons with red hover effect
+
+### Changed
+
+- **Theme system rewrite** - moved global stylesheet from `qApp->setStyleSheet()` to `MainWindow::setStyleSheet()` to prevent Qt from ignoring widget palettes; added `QPlainTextEdit`, `QStatusBar`, and `QLabel` rules to the stylesheet for proper theme propagation; editor themes are now applied after the global palette to prevent `QApplication::setPalette()` from overriding editor colors
+- **Zed external themes** - themes are loaded exclusively from `~/.config/ed/themes/` in Zed theme JSON format; themes are reloaded from disk when opening the Settings dialog (picks up external changes without restart)
+- **SSH Connect dialog** - now uses frameless window with custom title bar (matching Settings dialog style) instead of native window decoration
+- **KaTeX CSS patching** - font paths in katex.min.css are rewritten to absolute file:// URLs at extraction time for reliable font loading
+- **Math rendering** - LaTeX math is injected directly into the cmark-gfm AST as HTML inline nodes instead of using placeholder-based post-processing
+
+### Removed
+
+- **Built-in themes** - removed 12 hardcoded themes; all themes now loaded from external Zed JSON files
+- **Hand-written Markdown parser** - replaced by cmark-gfm; removed `markdownToHtml()`, `processInline()`, `buildHtml()` methods
+- **Theme file watcher** - removed QFileSystemWatcher approach (unreliable with atomic saves); themes reload on Settings dialog open instead
+
+### Fixed
+
+- **Theme not applied to editor text** - `qApp->setStyleSheet()` was causing Qt to ignore `setPalette()` on all widgets; fixed by using `MainWindow::setStyleSheet()` instead
+- **Theme not applied to status bar** - status bar and its labels now included in the main window stylesheet
+- **Editor not repainted on theme change** - `QApplication::setPalette()` was overriding editor-specific palette set by `applyTheme()`; editor themes are now applied after the global palette
+
 ## [0.6.0] - 2026-03-26
 
 ### Added
@@ -121,7 +154,7 @@ All notable changes to TextEd are documented in this file.
   - Tab width
   - GUI font and size
   - Color theme selection
-- **12 built-in color themes**: Default Light, Solarized Light, Monokai, Dracula, One Dark, Nord, Gruvbox Dark, Gruvbox Light, Tomorrow Night, GitHub Dark, Catppuccin Mocha, Catppuccin Latte
+- **Zed editor color themes** loaded from `~/.config/ed/themes/`
 - **SSH remote editing** via libssh2/SFTP:
   - Connect dialog with password and private key authentication
   - Remote file browser with directory navigation and file permissions display

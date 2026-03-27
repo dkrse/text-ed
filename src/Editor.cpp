@@ -39,11 +39,25 @@ void ScrollBarOverlay::paintEvent(QPaintEvent *)
     }
 }
 
+// --- SpacedDocumentLayout ---
+
+QRectF SpacedDocumentLayout::blockBoundingRect(const QTextBlock &block) const
+{
+    QRectF r = QPlainTextDocumentLayout::blockBoundingRect(block);
+    if (m_factor > 1.01)
+        r.setHeight(r.height() * m_factor);
+    return r;
+}
+
 // --- Editor ---
 
 Editor::Editor(QWidget *parent) : QPlainTextEdit(parent)
 {
     setFrameShape(QFrame::NoFrame);
+
+    m_spacedLayout = new SpacedDocumentLayout(document());
+    document()->setDocumentLayout(m_spacedLayout);
+
     m_lineNumberArea = new LineNumberArea(this);
     m_scrollBarOverlay = new ScrollBarOverlay(this);
 
@@ -158,6 +172,13 @@ void Editor::applySettings(const AppSettings &s)
     setBracketMatching(s.bracketMatching);
     setShowRuler(s.showRuler);
     setRulerColumn(s.rulerColumn);
+    setLineSpacing(s.lineSpacing);
+}
+
+void Editor::setLineSpacing(double factor)
+{
+    m_lineSpacing = factor;
+    m_spacedLayout->setSpacingFactor(factor);
 }
 
 void Editor::applyTheme(const EditorTheme &theme)
@@ -174,10 +195,14 @@ void Editor::applyTheme(const EditorTheme &theme)
 
     highlightCurrentLine();
     m_lineNumberArea->update();
+    viewport()->update();
 
     if (m_codeHighlighter) {
         m_codeHighlighter->applyThemeColors(theme.keyword, theme.type, theme.string,
             theme.comment, theme.number, theme.function, theme.preprocessor, theme.operatorColor);
+    }
+    if (m_mdHighlighter) {
+        m_mdHighlighter->setDarkTheme(theme.isDark);
     }
 }
 

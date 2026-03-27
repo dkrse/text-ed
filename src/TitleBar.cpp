@@ -96,7 +96,8 @@ void TitleBar::applyTheme(const QColor &bg, const QColor &fg, const QColor &acti
         "QTabBar::tab { background: %1; color: %2; padding: 6px 12px; border: none; min-width: 60px; }"
         "QTabBar::tab:selected { background: %3; color: %4; }"
         "QTabBar::tab:hover { background: %5; }"
-        "QTabBar::close-button { image: url(none); }"
+        "QTabBar::close-button { subcontrol-position: right; padding: 2px; }"
+        "QTabBar::close-button:hover { background: #e81123; border-radius: 2px; }"
     ).arg(baseBg, baseFg, actBg, actFg, hovBg));
 
     m_titleLabel->setStyleSheet(QString("QLabel { color: %1; }").arg(baseFg));

@@ -1,11 +1,24 @@
 #pragma once
 #include <QPlainTextEdit>
+#include <QPlainTextDocumentLayout>
 #include "CodeHighlighter.h"
 
 class QLabel;
 class MarkdownHighlighter;
 struct AppSettings;
 struct EditorTheme;
+
+class SpacedDocumentLayout : public QPlainTextDocumentLayout
+{
+    Q_OBJECT
+public:
+    explicit SpacedDocumentLayout(QTextDocument *doc) : QPlainTextDocumentLayout(doc) {}
+    void setSpacingFactor(double f) { m_factor = f; requestUpdate(); }
+    double spacingFactor() const { return m_factor; }
+    QRectF blockBoundingRect(const QTextBlock &block) const override;
+private:
+    double m_factor = 1.0;
+};
 
 class ScrollBarOverlay : public QWidget
 {
@@ -48,6 +61,7 @@ public:
     void setBracketMatching(bool on) { m_bracketMatching = on; highlightCurrentLine(); }
     void setShowRuler(bool on) { m_showRuler = on; viewport()->update(); }
     void setRulerColumn(int col) { m_rulerColumn = col; viewport()->update(); }
+    void setLineSpacing(double factor);
 
     void applySettings(const AppSettings &s);
     void applyTheme(const EditorTheme &theme);
@@ -99,6 +113,8 @@ private:
     bool m_showRuler = false;
     int m_rulerColumn = 80;
     QColor m_rulerColor = QColor(200, 200, 200, 100);
+    double m_lineSpacing = 1.0;
+    SpacedDocumentLayout *m_spacedLayout = nullptr;
 
     // Search state
     QList<QTextEdit::ExtraSelection> m_searchSelections;

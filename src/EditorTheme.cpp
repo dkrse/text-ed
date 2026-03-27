@@ -1,83 +1,126 @@
 #include "EditorTheme.h"
+#include <QDir>
+#include <QFile>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QJsonArray>
 
-const QVector<EditorTheme> &EditorTheme::builtinThemes()
+static QVector<EditorTheme> s_themes;
+
+static QColor parseColor(const QJsonValue &val, const QColor &fallback = QColor())
 {
-    static const QVector<EditorTheme> themes = {
-        // Default Light (GitHub-inspired)
-        {"Default Light",
-         "#ffffff", "#24292f", "#e8f0fe", "#f0f0f0", "#999999", "#0969da",
-         "#d73a49", "#6f42c1", "#032f62", "#6a737d", "#005cc5", "#6f42c1", "#22863a", "#d73a49"},
+    if (val.isNull() || !val.isString()) return fallback;
+    QString s = val.toString();
+    if (s.isEmpty()) return fallback;
+    QColor c(s);
+    return c.isValid() ? c : fallback;
+}
 
-        // Solarized Light
-        {"Solarized Light",
-         "#fdf6e3", "#657b83", "#eee8d5", "#eee8d5", "#93a1a1", "#268bd2",
-         "#859900", "#b58900", "#2aa198", "#93a1a1", "#d33682", "#268bd2", "#cb4b16", "#859900"},
+static EditorTheme parseZedTheme(const QJsonObject &themeObj)
+{
+    EditorTheme t;
+    t.name = themeObj["name"].toString();
+    t.isDark = (themeObj["appearance"].toString() == "dark");
 
-        // Monokai
-        {"Monokai",
-         "#272822", "#f8f8f2", "#3e3d32", "#2d2d2d", "#75715e", "#49483e",
-         "#f92672", "#66d9ef", "#e6db74", "#75715e", "#ae81ff", "#a6e22e", "#fd971f", "#f92672"},
+    QJsonObject s = themeObj["style"].toObject();
+    QJsonObject syn = s["syntax"].toObject();
 
-        // Dracula
-        {"Dracula",
-         "#282a36", "#f8f8f2", "#44475a", "#343746", "#6272a4", "#44475a",
-         "#ff79c6", "#8be9fd", "#f1fa8c", "#6272a4", "#bd93f9", "#50fa7b", "#ffb86c", "#ff79c6"},
+    // Editor colors
+    t.background    = parseColor(s["editor.background"], parseColor(s["background"], t.isDark ? "#1e1e2e" : "#ffffff"));
+    t.foreground    = parseColor(s["editor.foreground"], parseColor(s["text"], t.isDark ? "#cdd6f4" : "#24292f"));
+    t.currentLine   = parseColor(s["editor.active_line.background"], t.isDark ? QColor(255,255,255,13) : QColor(0,0,0,13));
+    t.lineNumberBg  = parseColor(s["editor.gutter.background"], t.background);
+    t.lineNumberFg  = parseColor(s["editor.line_number"], parseColor(s["text.muted"], t.isDark ? "#585b70" : "#999999"));
+    t.selection     = parseColor(s["element.selected"], t.isDark ? "#45475a" : "#ccd0da");
 
-        // One Dark
-        {"One Dark",
-         "#282c34", "#abb2bf", "#2c313c", "#2e3440", "#636d83", "#3e4451",
-         "#c678dd", "#e5c07b", "#98c379", "#5c6370", "#d19a66", "#61afef", "#e06c75", "#c678dd"},
+    // Player selection (first player) can override selection
+    QJsonArray players = s["players"].toArray();
+    if (!players.isEmpty()) {
+        QColor psel = parseColor(players[0].toObject()["selection"]);
+        if (psel.isValid()) t.selection = psel;
+    }
 
-        // Nord
-        {"Nord",
-         "#2e3440", "#d8dee9", "#3b4252", "#3b4252", "#4c566a", "#434c5e",
-         "#81a1c1", "#8fbcbb", "#a3be8c", "#616e88", "#b48ead", "#88c0d0", "#d08770", "#81a1c1"},
+    // UI chrome
+    t.titleBarBg      = parseColor(s["title_bar.background"], parseColor(s["background"], t.background));
+    t.tabBarBg        = parseColor(s["tab_bar.background"], t.titleBarBg);
+    t.tabInactiveBg   = parseColor(s["tab.inactive_background"], t.tabBarBg);
+    t.tabActiveBg     = parseColor(s["tab.active_background"], t.background);
+    t.statusBarBg     = parseColor(s["status_bar.background"], t.titleBarBg);
+    t.scrollTrackBg   = parseColor(s["scrollbar.track.background"], t.background);
+    t.scrollThumbBg   = parseColor(s["scrollbar.thumb.background"], t.lineNumberFg);
+    t.scrollThumbHover = parseColor(s["scrollbar.thumb.hover_background"], t.lineNumberFg);
+    t.panelBg         = parseColor(s["panel.background"], t.titleBarBg);
+    t.border          = parseColor(s["border"], t.isDark ? "#414559" : "#d0d0d0");
+    t.elementHover    = parseColor(s["element.hover"], t.isDark ? QColor(255,255,255,30) : QColor(0,0,0,30));
+    t.textMuted       = parseColor(s["text.muted"], t.lineNumberFg);
 
-        // Gruvbox Dark
-        {"Gruvbox Dark",
-         "#282828", "#ebdbb2", "#3c3836", "#3c3836", "#928374", "#504945",
-         "#fb4934", "#fabd2f", "#b8bb26", "#928374", "#d3869b", "#8ec07c", "#fe8019", "#fb4934"},
+    // Syntax colors
+    t.keyword       = parseColor(syn["keyword"].toObject()["color"], t.isDark ? "#cba6f7" : "#8839ef");
+    t.type          = parseColor(syn["type"].toObject()["color"], t.isDark ? "#f9e2af" : "#df8e1d");
+    t.string        = parseColor(syn["string"].toObject()["color"], t.isDark ? "#a6e3a1" : "#40a02b");
+    t.comment       = parseColor(syn["comment"].toObject()["color"], t.isDark ? "#6c7086" : "#8c8fa1");
+    t.number        = parseColor(syn["number"].toObject()["color"], parseColor(syn["constant"].toObject()["color"], t.isDark ? "#fab387" : "#fe640b"));
+    t.function      = parseColor(syn["function"].toObject()["color"], t.isDark ? "#89b4fa" : "#1e66f5");
+    t.preprocessor  = parseColor(syn["predoc"].toObject()["color"], parseColor(syn["attribute"].toObject()["color"], t.isDark ? "#f38ba8" : "#d20f39"));
+    t.operatorColor = parseColor(syn["operator"].toObject()["color"], t.isDark ? "#89dceb" : "#04a5e5");
 
-        // Gruvbox Light
-        {"Gruvbox Light",
-         "#fbf1c7", "#3c3836", "#ebdbb2", "#ebdbb2", "#928374", "#d5c4a1",
-         "#9d0006", "#b57614", "#79740e", "#928374", "#8f3f71", "#427b58", "#af3a03", "#9d0006"},
+    return t;
+}
 
-        // Tomorrow Night
-        {"Tomorrow Night",
-         "#1d1f21", "#c5c8c6", "#282a2e", "#282a2e", "#969896", "#373b41",
-         "#b294bb", "#f0c674", "#b5bd68", "#969896", "#de935f", "#81a2be", "#cc6666", "#b294bb"},
+void EditorTheme::loadFromDirectory(const QString &dirPath)
+{
+    s_themes.clear();
 
-        // GitHub Dark
-        {"GitHub Dark",
-         "#0d1117", "#c9d1d9", "#161b22", "#161b22", "#484f58", "#1f2937",
-         "#ff7b72", "#d2a8ff", "#a5d6ff", "#8b949e", "#79c0ff", "#d2a8ff", "#ffa657", "#ff7b72"},
+    QDir dir(dirPath);
+    if (!dir.exists()) return;
 
-        // Catppuccin Mocha
-        {"Catppuccin Mocha",
-         "#1e1e2e", "#cdd6f4", "#313244", "#313244", "#585b70", "#45475a",
-         "#cba6f7", "#f9e2af", "#a6e3a1", "#6c7086", "#fab387", "#89b4fa", "#f38ba8", "#cba6f7"},
+    QStringList filters;
+    filters << "*.json";
+    QFileInfoList files = dir.entryInfoList(filters, QDir::Files, QDir::Name);
 
-        // Catppuccin Latte
-        {"Catppuccin Latte",
-         "#eff1f5", "#4c4f69", "#e6e9ef", "#e6e9ef", "#9ca0b0", "#ccd0da",
-         "#8839ef", "#df8e1d", "#40a02b", "#9ca0b0", "#fe640b", "#1e66f5", "#d20f39", "#8839ef"},
-    };
-    return themes;
+    for (const auto &fi : files) {
+        QFile f(fi.absoluteFilePath());
+        if (!f.open(QIODevice::ReadOnly)) continue;
+
+        QJsonParseError err;
+        QJsonDocument doc = QJsonDocument::fromJson(f.readAll(), &err);
+        f.close();
+        if (err.error != QJsonParseError::NoError) continue;
+
+        QJsonObject root = doc.object();
+        QJsonArray themesArray = root["themes"].toArray();
+
+        for (const auto &tv : themesArray) {
+            EditorTheme t = parseZedTheme(tv.toObject());
+            if (!t.name.isEmpty())
+                s_themes.append(t);
+        }
+    }
+}
+
+const QVector<EditorTheme> &EditorTheme::themes()
+{
+    return s_themes;
 }
 
 const EditorTheme &EditorTheme::themeByName(const QString &name)
 {
-    for (const auto &t : builtinThemes()) {
+    for (const auto &t : s_themes) {
         if (t.name == name) return t;
     }
-    return builtinThemes().first();
+    if (!s_themes.isEmpty()) return s_themes.first();
+    static EditorTheme fallback{"Fallback", false,
+        "#ffffff", "#000000", "#f0f0f0", "#f0f0f0", "#999999", "#ccd0da",
+        "#f0f0f0", "#f0f0f0", "#f0f0f0", "#ffffff", "#f0f0f0", "#f0f0f0",
+        "#999999", "#666666", "#e0e0e0", "#d0d0d0", "#e0e0e0", "#666666",
+        "#d73a49", "#6f42c1", "#032f62", "#6a737d", "#005cc5", "#6f42c1", "#22863a", "#d73a49"};
+    return fallback;
 }
 
 QStringList EditorTheme::themeNames()
 {
     QStringList names;
-    for (const auto &t : builtinThemes())
+    for (const auto &t : s_themes)
         names << t.name;
     return names;
 }

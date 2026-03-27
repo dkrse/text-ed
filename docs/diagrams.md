@@ -15,12 +15,13 @@ graph TB
 
     subgraph TitleBar
         HM[Hamburger Menu ☰]
-        TBR[QTabBar]
+        TBR[QTabBar + Close Buttons]
         WC[Window Controls]
     end
 
     subgraph "Editor Tab (per file)"
         ED[Editor]
+        SDL[SpacedDocumentLayout]
         MM[Minimap]
     end
 
@@ -34,6 +35,7 @@ graph TB
     subgraph "Preview Tab (per .md file)"
         MP["MarkdownPreview (QWidget)"]
         WV[QWebEngineView]
+        CMK[cmark-gfm]
         KT[KaTeX]
         MJ[Mermaid.js]
         HJS[highlight.js]
@@ -56,8 +58,10 @@ graph TB
     end
 
     TW --> ED
+    ED --> SDL
     TW --> MM
     TW --> MP
+    MP --> CMK
     MP --> WV
     WV --> KT
     WV --> MJ
@@ -82,6 +86,7 @@ classDiagram
     QMainWindow <|-- MainWindow
     QWidget <|-- TitleBar
     QPlainTextEdit <|-- Editor
+    QPlainTextDocumentLayout <|-- SpacedDocumentLayout
     QWidget <|-- MarkdownPreview
     QSyntaxHighlighter <|-- CodeHighlighter
     QSyntaxHighlighter <|-- MarkdownHighlighter
@@ -101,12 +106,20 @@ classDiagram
     MainWindow --> AppSettings : configuration
     MainWindow --> TabData : per-tab state
 
+    Editor --> SpacedDocumentLayout : line spacing
     Editor --> CodeHighlighter : code files
     Editor --> MarkdownHighlighter : .md files
     Editor --> LineNumberArea : gutter
     Editor --> ScrollBarOverlay : search markers
 
     MarkdownPreview --> QWebEngineView : contains
+
+    class SpacedDocumentLayout {
+        -double m_factor
+        +setSpacingFactor(f)
+        +spacingFactor() double
+        +blockBoundingRect(block) QRectF
+    }
 
     class TitleBar {
         -QTabBar* m_tabBar
@@ -130,16 +143,26 @@ classDiagram
         +save()
         +openPreviewTab(sourceIndex)
         +closePreviewTab(previewIndex)
+        -applyThemeToApp(theme)
     }
 
     class Editor {
+        -SpacedDocumentLayout* m_spacedLayout
+        -double m_lineSpacing
         -bool m_autoIndent
         -bool m_bracketMatching
         +setLanguage(lang)
         +setMarkdownMode(on)
+        +setLineSpacing(factor)
         +applyTheme(theme)
         +applySettings(settings)
         +highlightSearchMatches(text, caseSensitive)
+    }
+
+    class MarkdownHighlighter {
+        -bool m_dark
+        +setDarkTheme(dark)
+        -buildRules()
     }
 
     class MarkdownPreview {
@@ -150,7 +173,9 @@ classDiagram
         +setDarkMode(dark)
         +zoomIn()
         +zoomOut()
-        +exportToPdf(path)
+        +exportToPdf(path, marginL, marginR, pageNum, landscape, border)
+        -markdownToHtml(md) QString
+        -postProcessPdf(data, path, layout, pageNum, border)
     }
 
     class TabData {
@@ -175,15 +200,18 @@ classDiagram
         +bool autoSave
         +bool minimap
         +bool showRuler
+        +double lineSpacing
         +QString themeName
     }
 
     class EditorTheme {
+        +bool isDark
         +QColor background
         +QColor foreground
         +QColor keyword
         +QColor string
         +QColor comment
+        +loadFromDirectory(path)$
         +themeByName(name)$ EditorTheme
         +themeNames()$ QStringList
     }
@@ -218,33 +246,6 @@ sequenceDiagram
     end
 ```
 
-## Save Flow
-
-```mermaid
-sequenceDiagram
-    actor User
-    participant MW as MainWindow
-    participant ED as Editor
-    participant SSH as SshSession
-
-    User->>MW: Save (Ctrl+S)
-    MW->>MW: Get current TabData
-    alt Remote file
-        MW->>SSH: writeFile(remotePath, data)
-        SSH-->>MW: ok/error
-    else Local file
-        alt Has file path
-            MW->>MW: saveFileFromTab(index, path)
-        else No file path
-            MW->>User: Save As dialog
-            User-->>MW: chosen path
-            MW->>MW: saveFileFromTab(index, path)
-        end
-    end
-    MW->>ED: setProperty("savedContent", text)
-    MW->>MW: updateTabTitle() (remove *)
-```
-
 ## Markdown Preview Flow
 
 ```mermaid
@@ -253,6 +254,7 @@ sequenceDiagram
     participant MW as MainWindow
     participant ED as Editor
     participant MP as MarkdownPreview
+    participant CMK as cmark-gfm
     participant WV as QWebEngineView
 
     User->>MW: Click preview button on .md tab
@@ -262,16 +264,64 @@ sequenceDiagram
     MW->>MW: Insert preview tab after source
     MP->>MP: updatePreview(text)
     MP->>MP: debounce 400ms
-    MP->>MP: render()
-    Note over MP: markdownToHtml() with math protection
-    Note over MP: buildHtml() with theme-aware CSS
-    MP->>MP: Write HTML to temp file
+    MP->>CMK: parse + attach GFM extensions
+    CMK-->>MP: AST
+    MP->>MP: injectMathSpans(AST)
+    MP->>CMK: render HTML
+    CMK-->>MP: HTML string
+    MP->>MP: Convert mermaid blocks
+    MP->>MP: Build full HTML page with CSS/JS
     MP->>WV: load(file:///tmp/.../preview.html)
+```
 
-    User->>ED: Edit text
-    ED-->>MP: textChanged signal
-    MP->>MP: updatePreview(text)
-    MP->>MP: debounce 400ms...
+## PDF Export Flow
+
+```mermaid
+sequenceDiagram
+    actor User
+    participant MW as MainWindow
+    participant DLG as PDF Options Dialog
+    participant MP as MarkdownPreview
+    participant WE as QWebEnginePage
+    participant PDF as QPdfDocument/Writer
+
+    User->>MW: View > Export Preview to PDF
+    MW->>DLG: Show options (margins, numbering, orientation, border)
+    DLG-->>MW: User confirms
+    MW->>MP: exportToPdf(path, margins, numbering, landscape, border)
+    MP->>WE: injectPrintCss()
+    alt No post-processing needed
+        MP->>WE: printToPdf(path, layout)
+    else Needs page numbers or borders
+        MP->>WE: printToPdf(callback, layout)
+        WE-->>MP: PDF byte array
+        MP->>PDF: Load via QPdfDocument
+        MP->>PDF: Re-render via QPdfWriter + QPainter
+        Note over PDF: Add margins, page numbers, borders
+        MP->>PDF: Save to file
+    end
+    MP->>WE: removePrintCss()
+```
+
+## Theme Application Flow
+
+```mermaid
+flowchart TD
+    A[Settings Dialog OK / Theme selected] --> B[applyThemeToApp]
+    B --> C[Set dark/light mode on previews]
+    B --> D[TitleBar::applyTheme - tabs, buttons]
+    B --> E[Status bar combos stylesheet]
+    B --> F["MainWindow::setStyleSheet()<br/>(QPlainTextEdit, QStatusBar, QScrollBar, etc.)"]
+    B --> G{isDark?}
+    G -->|Yes| H[QApplication::setPalette - dark palette]
+    G -->|No| I[QApplication::setPalette - standard palette]
+    H --> J["Editor::applyTheme (AFTER global palette)"]
+    I --> J
+    J --> K[setPalette on editor viewport]
+    J --> L[CodeHighlighter::applyThemeColors + rehighlight]
+    J --> M[MarkdownHighlighter::setDarkTheme + rehighlight]
+    J --> N[LineNumberArea::update]
+    B --> O["Cascade update() on all child widgets"]
 ```
 
 ## Modification Detection
@@ -351,42 +401,32 @@ sequenceDiagram
 
 ```mermaid
 flowchart TB
-    subgraph "12 Built-in Themes"
-        L1[Default Light]
-        L2[Solarized Light]
-        L3[Gruvbox Light]
-        L4[Catppuccin Latte]
-        D1[Monokai]
-        D2[Dracula]
-        D3[One Dark]
-        D4[Nord]
-        D5[Gruvbox Dark]
-        D6[Tomorrow Night]
-        D7[GitHub Dark]
-        D8[Catppuccin Mocha]
+    subgraph "Zed Theme Files (~/.config/ed/themes/)"
+        TF["*.json files<br/>(Zed theme format)"]
     end
 
     subgraph EditorTheme
         BG[background / foreground]
         CL[currentLine / selection]
         LN[lineNumber bg/fg]
+        UI[titleBar / tabBar / statusBar / panel / border]
         SY[keyword / type / string / comment / number / function / preprocessor / operator]
     end
 
     subgraph "Applied to"
+        SS["MainWindow stylesheet<br/>(QPlainTextEdit, QStatusBar, QScrollBar)"]
         EP[Editor palette]
         LNA[LineNumberArea]
         MMP[Minimap]
         CHL[CodeHighlighter formats]
+        MDH[MarkdownHighlighter dark/light]
         MPV[MarkdownPreview dark/light]
         TBR[TitleBar + tabs + window controls]
-        SBR[Scrollbars]
-        CMB[Status bar combos]
         AP[QApplication palette - dark themes]
     end
 
-    L1 & D1 --> EditorTheme
-    EditorTheme --> EP & LNA & MMP & CHL & MPV & TBR & SBR & CMB & AP
+    TF --> EditorTheme
+    EditorTheme --> SS & EP & LNA & MMP & CHL & MDH & MPV & TBR & AP
 ```
 
 ## Application Feature Map
@@ -397,17 +437,19 @@ mindmap
     Editor
       Syntax Highlighting
         28 Languages
-        Markdown
+        Markdown dark/light
       Line Numbers
       Current Line Highlight
       Bracket Matching
       Auto-indent
       Font Zoom
+      Line Spacing
       Whitespace Display
       Vertical Ruler
       Minimap
     File Management
       Tab Interface
+      Closable Tabs
       Session Restore
       Recent Files
       Large File Support
@@ -422,26 +464,33 @@ mindmap
       Scrollbar Markers
       Case Sensitive
     Markdown
+      cmark-gfm Parser
+      GFM Extensions
       Live Preview in Tab
       Multiple Previews
       Dark/Light Mode
       LaTeX / KaTeX
-      Multi-line Math
       Mermaid Diagrams
       Code Highlighting
       Preview Zoom
       PDF Export
+        Margins
+        Page Numbers
+        Orientation
+        Page Borders
     Remote
       SSH / SFTP
       Remote File Browser
       File Management
       Saved Connections
+      Frameless Dialog
     Appearance
       Custom Title Bar
       Hamburger Menu
-      12 Color Themes
+      Zed External Themes
       Dark/Light Mode
       Theme-aware Scrollbars
       Separate GUI/Editor Fonts
       Configurable Settings
+      Application Icon
 ```

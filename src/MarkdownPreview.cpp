@@ -4,10 +4,14 @@
 #include <QUrl>
 #include <QDir>
 #include <QFile>
+#include <QBuffer>
 #include <QWebEngineSettings>
-#include <QWebEngineProfile>
-#include <QPageLayout>
-#include <QPageSize>
+#include <QPdfDocument>
+#include <QPdfWriter>
+#include <QPainter>
+#include <cstdlib>
+#include <cmark-gfm.h>
+#include <cmark-gfm-core-extensions.h>
 
 MarkdownPreview::MarkdownPreview(QWidget *parent)
     : QWidget(parent)
@@ -27,10 +31,16 @@ MarkdownPreview::MarkdownPreview(QWidget *parent)
     deployResources();
     m_htmlPath = m_tempDir + "/preview.html";
 
+    cmark_gfm_core_extensions_ensure_registered();
+
     m_debounce = new QTimer(this);
     m_debounce->setSingleShot(true);
     m_debounce->setInterval(400);
     connect(m_debounce, &QTimer::timeout, this, &MarkdownPreview::render);
+}
+
+MarkdownPreview::~MarkdownPreview()
+{
 }
 
 void MarkdownPreview::deployResources()
@@ -56,15 +66,28 @@ void MarkdownPreview::deployResources()
 
     struct Entry { const char *qrc; const char *rel; };
     static const Entry entries[] = {
-        {":/resources/katex/katex.min.js",   "katex/katex.min.js"},
-        {":/resources/katex/katex.min.css",  "katex/katex.min.css"},
-        {":/resources/mermaid/mermaid.min.js","mermaid/mermaid.min.js"},
-        {":/resources/hljs/highlight.min.js","hljs/highlight.min.js"},
-        {":/resources/hljs/github.min.css", "hljs/github.min.css"},
+        {":/resources/katex/katex.min.js",    "katex/katex.min.js"},
+        {":/resources/mermaid/mermaid.min.js", "mermaid/mermaid.min.js"},
+        {":/resources/hljs/highlight.min.js",  "hljs/highlight.min.js"},
+        {":/resources/hljs/hljs-dark.min.css", "hljs/hljs-dark.min.css"},
+        {":/resources/hljs/hljs-light.min.css","hljs/hljs-light.min.css"},
     };
 
     for (const auto &e : entries)
         extract(e.qrc, m_tempDir + "/" + e.rel);
+
+    // KaTeX CSS with patched font paths
+    QString katexCssPath = m_tempDir + "/katex/katex.min.css";
+    if (!QFile::exists(katexCssPath)) {
+        QFile res(":/resources/katex/katex.min.css");
+        if (res.open(QIODevice::ReadOnly)) {
+            QString css = QString::fromUtf8(res.readAll());
+            css.replace("fonts/", "file://" + m_tempDir + "/katex/fonts/");
+            QFile out(katexCssPath);
+            if (out.open(QIODevice::WriteOnly))
+                out.write(css.toUtf8());
+        }
+    }
 
     QDir fontsQrc(":/resources/katex/fonts");
     for (const QString &name : fontsQrc.entryList(QDir::Files))
@@ -103,335 +126,9 @@ void MarkdownPreview::render()
         R"(<pre><code class="language-mermaid">([\s\S]*?)</code></pre>)"),
         R"(<div class="mermaid">\1</div>)");
 
-    QString html = buildHtml(body);
-
-    QFile f(m_htmlPath);
-    if (f.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
-        f.write(html.toUtf8());
-        f.close();
-    }
-    m_webView->load(QUrl::fromLocalFile(m_htmlPath));
-}
-
-void MarkdownPreview::exportToPdf(const QString &filePath)
-{
-    QPageLayout layout(QPageSize(QPageSize::A4), QPageLayout::Portrait,
-                       QMarginsF(15, 15, 15, 15), QPageLayout::Millimeter);
-    m_webView->page()->printToPdf(filePath, layout);
-}
-
-// ── Markdown → HTML ─────────────────────────────────────────────────
-
-QString MarkdownPreview::markdownToHtml(const QString &md) const
-{
-    // Protect code blocks and math from line-by-line processing
-    static QRegularExpression reCodeFence(R"(^```[\s\S]*?^```)", QRegularExpression::MultilineOption);
-    static QRegularExpression reCodeSpan(R"(`[^`]+`)");
-    static QRegularExpression reDisplayMath(R"(\$\$[\s\S]+?\$\$)");
-    static QRegularExpression reInlineMathML(R"(\$(?!\s)(?:[^$\\]|\\.|\n)+?\$)");
-
-    QVector<QString> protectedFragments;
-    QString work = md;
-
-    // Step 1: mask fenced code blocks, then inline code spans
-    auto maskFragments = [&](const QRegularExpression &re) {
-        QRegularExpressionMatchIterator it = re.globalMatch(work);
-        QVector<QRegularExpressionMatch> matches;
-        while (it.hasNext()) matches.append(it.next());
-        for (int i = matches.size() - 1; i >= 0; --i) {
-            const auto &m = matches[i];
-            QString ph = QString("\x05PH%1\x05").arg(protectedFragments.size());
-            protectedFragments.append(m.captured());
-            work.replace(m.capturedStart(), m.capturedLength(), ph);
-        }
-    };
-    maskFragments(reCodeFence);
-    maskFragments(reCodeSpan);
-
-    // Step 2: protect multi-line math (display $$...$$ and inline $...$)
-    QVector<QString> mathFragments;
-    auto protectMath = [&](const QRegularExpression &re) {
-        QRegularExpressionMatchIterator it = re.globalMatch(work);
-        QVector<QRegularExpressionMatch> matches;
-        while (it.hasNext()) matches.append(it.next());
-        for (int i = matches.size() - 1; i >= 0; --i) {
-            const auto &m = matches[i];
-            QString ph = QString("\x02MATH%1\x02").arg(mathFragments.size());
-            mathFragments.append(m.captured());
-            work.replace(m.capturedStart(), m.capturedLength(), ph);
-        }
-    };
-    protectMath(reDisplayMath);
-    protectMath(reInlineMathML);
-
-    // Step 3: restore code blocks (they are safe from math replacement)
-    for (int i = 0; i < protectedFragments.size(); ++i)
-        work.replace(QString("\x05PH%1\x05").arg(i), protectedFragments[i]);
-
-    // Now do line-by-line markdown conversion on 'work'
-    QString html;
-    html.reserve(work.size());
-
-    const QStringList lines = work.split('\n');
-    bool inCodeBlock = false;
-    bool inMermaid = false;
-    QString codeContent;
-    QString codeLang;
-    bool inUl = false;
-    bool inOl = false;
-    bool inBlockquote = false;
-    bool inTable = false;
-    bool hadTableSep = false;
-    QVector<QString> tableAligns;
-
-    static const QRegularExpression reHead(QStringLiteral("^(#{1,6})\\s+(.*)"));
-    static const QRegularExpression reHr(QStringLiteral("^(---|\\*\\*\\*|___)\\s*$"));
-    static const QRegularExpression reUl(QStringLiteral("^\\s*[-*+]\\s+(.*)"));
-    static const QRegularExpression reOl(QStringLiteral("^\\s*\\d+\\.\\s+(.*)"));
-
-    auto closePending = [&]() {
-        if (inUl) { html += QStringLiteral("</ul>\n"); inUl = false; }
-        if (inOl) { html += QStringLiteral("</ol>\n"); inOl = false; }
-        if (inBlockquote) { html += QStringLiteral("</blockquote>\n"); inBlockquote = false; }
-        if (inTable) {
-            html += (hadTableSep ? QStringLiteral("</tbody>") : QString()) + QStringLiteral("</table>\n");
-            inTable = false; hadTableSep = false;
-        }
-    };
-
-    for (const QString &line : lines) {
-        QString trimmed = line.trimmed();
-
-        // Fenced code blocks
-        if (trimmed.startsWith(QStringLiteral("```"))) {
-            if (!inCodeBlock) {
-                closePending();
-                inCodeBlock = true;
-                codeLang = trimmed.mid(3).trimmed();
-                inMermaid = (codeLang.compare(QStringLiteral("mermaid"), Qt::CaseInsensitive) == 0);
-                codeContent.clear();
-            } else {
-                if (inMermaid) {
-                    html += QStringLiteral("<div class=\"mermaid\">\n") + codeContent + QStringLiteral("</div>\n");
-                } else if (!codeLang.isEmpty()) {
-                    html += QStringLiteral("<pre><code class=\"language-") + codeLang.toHtmlEscaped() +
-                            QStringLiteral("\">") + codeContent.toHtmlEscaped() + QStringLiteral("</code></pre>\n");
-                } else {
-                    html += QStringLiteral("<pre><code>") + codeContent.toHtmlEscaped() + QStringLiteral("</code></pre>\n");
-                }
-                inCodeBlock = false;
-                inMermaid = false;
-            }
-            continue;
-        }
-        if (inCodeBlock) { codeContent += line + '\n'; continue; }
-
-        // Blank line
-        if (trimmed.isEmpty()) { closePending(); html += QStringLiteral("<br>\n"); continue; }
-
-        // Headings
-        auto mHead = reHead.match(trimmed);
-        if (mHead.hasMatch()) {
-            closePending();
-            int level = mHead.captured(1).length();
-            html += QStringLiteral("<h%1>%2</h%1>\n").arg(level).arg(processInline(mHead.captured(2)));
-            continue;
-        }
-
-        // Horizontal rule
-        if (reHr.match(trimmed).hasMatch()) { closePending(); html += QStringLiteral("<hr>\n"); continue; }
-
-        // Table
-        if (trimmed.startsWith('|') && trimmed.endsWith('|')) {
-            QStringList cells;
-            for (const auto &cell : trimmed.split('|', Qt::SkipEmptyParts))
-                cells << cell.trimmed();
-
-            bool isSep = !cells.isEmpty();
-            for (const auto &c : cells) {
-                QString t = c; t.remove('-'); t.remove(':'); t.remove(' ');
-                if (!t.isEmpty()) { isSep = false; break; }
-            }
-
-            if (!inTable) {
-                closePending();
-                inTable = true; hadTableSep = false; tableAligns.clear();
-                html += QStringLiteral("<table><thead><tr>");
-                for (const auto &h : cells)
-                    html += QStringLiteral("<th>") + processInline(h) + QStringLiteral("</th>");
-                html += QStringLiteral("</tr></thead>\n");
-            } else if (isSep && !hadTableSep) {
-                hadTableSep = true; tableAligns.clear();
-                for (const auto &s : cells) {
-                    QString t = s.trimmed();
-                    if (t.startsWith(':') && t.endsWith(':')) tableAligns << "center";
-                    else if (t.endsWith(':')) tableAligns << "right";
-                    else tableAligns << "left";
-                }
-                html += QStringLiteral("<tbody>\n");
-            } else if (hadTableSep) {
-                html += QStringLiteral("<tr>");
-                for (int c = 0; c < cells.size(); ++c) {
-                    QString align = (c < tableAligns.size()) ? tableAligns[c] : "left";
-                    html += QStringLiteral("<td style=\"text-align:") + align + QStringLiteral("\">") +
-                            processInline(cells[c]) + QStringLiteral("</td>");
-                }
-                html += QStringLiteral("</tr>\n");
-            }
-            continue;
-        }
-        if (inTable) {
-            html += (hadTableSep ? QStringLiteral("</tbody>") : QString()) + QStringLiteral("</table>\n");
-            inTable = false; hadTableSep = false;
-        }
-
-        // Blockquote
-        if (trimmed.startsWith('>')) {
-            QString content = trimmed.mid(1);
-            if (content.startsWith(' ')) content = content.mid(1);
-            if (!inBlockquote) {
-                if (inUl) { html += QStringLiteral("</ul>\n"); inUl = false; }
-                if (inOl) { html += QStringLiteral("</ol>\n"); inOl = false; }
-                inBlockquote = true;
-                html += QStringLiteral("<blockquote>\n");
-            }
-            html += QStringLiteral("<p>") + processInline(content) + QStringLiteral("</p>\n");
-            continue;
-        }
-        if (inBlockquote) { html += QStringLiteral("</blockquote>\n"); inBlockquote = false; }
-
-        // Unordered list
-        auto mUl = reUl.match(line);
-        if (mUl.hasMatch()) {
-            if (inOl) { html += QStringLiteral("</ol>\n"); inOl = false; }
-            if (!inUl) { inUl = true; html += QStringLiteral("<ul>\n"); }
-            html += QStringLiteral("<li>") + processInline(mUl.captured(1)) + QStringLiteral("</li>\n");
-            continue;
-        }
-
-        // Ordered list
-        auto mOl = reOl.match(line);
-        if (mOl.hasMatch()) {
-            if (inUl) { html += QStringLiteral("</ul>\n"); inUl = false; }
-            if (!inOl) { inOl = true; html += QStringLiteral("<ol>\n"); }
-            html += QStringLiteral("<li>") + processInline(mOl.captured(1)) + QStringLiteral("</li>\n");
-            continue;
-        }
-
-        // Paragraph
-        closePending();
-        html += QStringLiteral("<p>") + processInline(trimmed) + QStringLiteral("</p>\n");
-    }
-
-    if (inCodeBlock) {
-        if (inMermaid)
-            html += QStringLiteral("<div class=\"mermaid\">\n") + codeContent + QStringLiteral("</div>\n");
-        else
-            html += QStringLiteral("<pre><code>") + codeContent.toHtmlEscaped() + QStringLiteral("</code></pre>\n");
-    }
-    closePending();
-
-    // Restore math placeholders as KaTeX spans
-    for (int i = 0; i < mathFragments.size(); ++i) {
-        QString ph = QString("\x02MATH%1\x02").arg(i);
-        QString raw = mathFragments[i];
-        // Remove <p> wrapper if the placeholder got wrapped
-        html.replace("<p>" + ph + "</p>", ph);
-
-        if (raw.startsWith("$$") && raw.endsWith("$$")) {
-            QString inner = raw.mid(2, raw.length() - 4);
-            html.replace(ph, QStringLiteral("<span class=\"katex-display\">") + inner + QStringLiteral("</span>"));
-        } else if (raw.startsWith("$") && raw.endsWith("$")) {
-            QString inner = raw.mid(1, raw.length() - 2);
-            html.replace(ph, QStringLiteral("<span class=\"katex-inline\">") + inner + QStringLiteral("</span>"));
-        } else {
-            html.replace(ph, raw.toHtmlEscaped());
-        }
-    }
-
-    return html;
-}
-
-QString MarkdownPreview::processInline(const QString &text)
-{
-    static const QRegularExpression reDispMath(QStringLiteral("\\$\\$(.+?)\\$\\$"));
-    static const QRegularExpression reInlineMath(QStringLiteral("(?<!\\$)\\$(?!\\$)(.+?)(?<!\\$)\\$(?!\\$)"));
-    static const QRegularExpression reBold(QStringLiteral("\\*\\*(.+?)\\*\\*"));
-    static const QRegularExpression reItalic(QStringLiteral("(?<!\\*)\\*(?!\\*)(.+?)(?<!\\*)\\*(?!\\*)"));
-    static const QRegularExpression reCode(QStringLiteral("`([^`]+)`"));
-    static const QRegularExpression reStrike(QStringLiteral("~~(.+?)~~"));
-    static const QRegularExpression reImg(QStringLiteral("!\\[([^\\]]*)\\]\\(([^)]+)\\)"));
-    static const QRegularExpression reLink(QStringLiteral("\\[([^\\]]+)\\]\\(([^)]+)\\)"));
-
-    struct Placeholder { qsizetype pos; qsizetype len; QString replacement; };
-    QVector<Placeholder> placeholders;
-
-    auto itD = reDispMath.globalMatch(text);
-    while (itD.hasNext()) {
-        auto m = itD.next();
-        placeholders.append({m.capturedStart(), m.capturedLength(),
-            QStringLiteral("<span class=\"katex-display\">") + m.captured(1) + QStringLiteral("</span>")});
-    }
-
-    auto itI = reInlineMath.globalMatch(text);
-    while (itI.hasNext()) {
-        auto m = itI.next();
-        bool overlaps = false;
-        for (const auto &p : placeholders) {
-            if (m.capturedStart() >= p.pos && m.capturedStart() < p.pos + p.len) { overlaps = true; break; }
-        }
-        if (!overlaps) {
-            placeholders.append({m.capturedStart(), m.capturedLength(),
-                QStringLiteral("<span class=\"katex-inline\">") + m.captured(1) + QStringLiteral("</span>")});
-        }
-    }
-
-    QString result;
-    if (placeholders.isEmpty()) {
-        result = text.toHtmlEscaped();
-    } else {
-        std::sort(placeholders.begin(), placeholders.end(),
-                  [](const Placeholder &a, const Placeholder &b) { return a.pos < b.pos; });
-        qsizetype lastEnd = 0;
-        for (const auto &p : placeholders) {
-            result += text.mid(lastEnd, p.pos - lastEnd).toHtmlEscaped();
-            result += p.replacement;
-            lastEnd = p.pos + p.len;
-        }
-        result += text.mid(lastEnd).toHtmlEscaped();
-    }
-
-    // Protect inline code from bold/italic processing
-    QVector<QString> codeFragments;
-    {
-        QRegularExpressionMatchIterator it = reCode.globalMatch(result);
-        QVector<QRegularExpressionMatch> codeMatches;
-        while (it.hasNext()) codeMatches.append(it.next());
-        for (int ci = codeMatches.size() - 1; ci >= 0; --ci) {
-            const auto &m = codeMatches[ci];
-            QString placeholder = QStringLiteral("\x04CODE") + QString::number(codeFragments.size()) + QStringLiteral("\x04");
-            codeFragments.append(QStringLiteral("<code>") + m.captured(1) + QStringLiteral("</code>"));
-            result.replace(m.capturedStart(), m.capturedLength(), placeholder);
-        }
-    }
-
-    result.replace(reBold, QStringLiteral("<strong>\\1</strong>"));
-    result.replace(reItalic, QStringLiteral("<em>\\1</em>"));
-    result.replace(reStrike, QStringLiteral("<del>\\1</del>"));
-    result.replace(reImg, QStringLiteral("<img src=\"\\2\" alt=\"\\1\" style=\"max-width:100%\">"));
-    result.replace(reLink, QStringLiteral("<a href=\"\\2\">\\1</a>"));
-
-    for (int ci = 0; ci < codeFragments.size(); ++ci)
-        result.replace(QStringLiteral("\x04CODE") + QString::number(ci) + QStringLiteral("\x04"), codeFragments[ci]);
-
-    return result;
-}
-
-QString MarkdownPreview::buildHtml(const QString &body) const
-{
     QString bg      = m_dark ? "#1e1e1e" : "#ffffff";
     QString fg      = m_dark ? "#d4d4d4" : "#24292f";
-    QString codeBg  = m_dark ? "#2d2d2d" : "#f6f8fa";
+    QString codeBg  = m_dark ? "#2d2d2d" : "#f0f0f0";
     QString codeFg  = m_dark ? "#ce9178" : "#c7254e";
     QString borderC = m_dark ? "#3e3e3e" : "#d0d0d0";
     QString linkC   = m_dark ? "#61afef" : "#0366d6";
@@ -447,9 +144,9 @@ QString MarkdownPreview::buildHtml(const QString &body) const
     QString katexJs  = base + "katex/katex.min.js";
     QString mermaidJs= base + "mermaid/mermaid.min.js";
     QString hljsJs   = base + "hljs/highlight.min.js";
-    QString hljsCss  = base + "hljs/github.min.css";
+    QString hljsCss  = base + (m_dark ? "hljs/hljs-dark.min.css" : "hljs/hljs-light.min.css");
 
-    return QStringLiteral("<!DOCTYPE html>\n<html><head>\n<meta charset=\"utf-8\">\n"
+    QString page = QStringLiteral("<!DOCTYPE html>\n<html><head>\n<meta charset=\"utf-8\">\n"
         "<link rel=\"stylesheet\" href=\"") + katexCss + QStringLiteral("\">\n"
         "<link rel=\"stylesheet\" href=\"") + hljsCss + QStringLiteral("\">\n"
         "<script src=\"") + katexJs + QStringLiteral("\"></script>\n"
@@ -471,7 +168,8 @@ QString MarkdownPreview::buildHtml(const QString &body) const
         "  font-family: 'JetBrains Mono', 'Fira Code', monospace; font-size: 0.9em; }\n"
         "pre { background: ") + codeBg + QStringLiteral("; padding: 12px 16px;\n"
         "  border-radius: 6px; overflow-x: auto; border: 1px solid ") + borderC + QStringLiteral("; }\n"
-        "pre code { background: none; padding: 0; font-size: 0.85em; color: ") + fg + QStringLiteral("; }\n"
+        "pre code { background: none; padding: 0; font-size: 0.85em; }\n"
+        "pre code:not(.hljs) { color: ") + fg + QStringLiteral("; }\n"
         ".mermaid { text-align: center; }\n"
         "blockquote { border-left: 4px solid ") + bqBorder + QStringLiteral("; color: ") + bqFg + QStringLiteral(";\n"
         "  margin: 8px 0; padding: 4px 16px; }\n"
@@ -483,6 +181,17 @@ QString MarkdownPreview::buildHtml(const QString &body) const
         "th { background: ") + thBg + QStringLiteral("; font-weight: 600; }\n"
         "img { max-width: 100%; border-radius: 4px; }\n"
         "del { text-decoration: line-through; opacity: 0.6; }\n"
+        "@media print {\n"
+        "  pre { white-space: pre-wrap !important; word-wrap: break-word !important;\n"
+        "        overflow-x: visible !important; overflow-wrap: break-word !important; }\n"
+        "  pre code { white-space: pre-wrap !important; word-wrap: break-word !important;\n"
+        "             overflow-wrap: break-word !important; }\n"
+        "  code { word-break: break-all !important; }\n"
+        "  body { overflow-wrap: break-word; word-break: break-word; }\n"
+        "  table { table-layout: fixed; }\n"
+        "  td, th { word-wrap: break-word; overflow-wrap: break-word; }\n"
+        "  img { max-width: 100% !important; }\n"
+        "}\n"
         "</style>\n</head><body>\n")
         + body +
         QStringLiteral("\n<script>\n"
@@ -509,4 +218,265 @@ QString MarkdownPreview::buildHtml(const QString &body) const
         "    });\n"
         "}\n"
         "</script>\n</body></html>");
+
+    QFile f(m_htmlPath);
+    if (f.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+        f.write(page.toUtf8());
+        f.close();
+    }
+    m_webView->load(QUrl::fromLocalFile(m_htmlPath));
+}
+
+// ── PDF Export ───────────────────────────────────────────────────────
+
+void MarkdownPreview::injectPrintCss(std::function<void()> then)
+{
+    QString js = R"(
+        (function() {
+            var old = document.getElementById('pdf-print-fix');
+            if (old) old.remove();
+            var style = document.createElement('style');
+            style.id = 'pdf-print-fix';
+            style.textContent = '@page { margin: 0; } @media print { html, body { border: none !important; outline: none !important; box-shadow: none !important; } pre { white-space: pre-wrap !important; word-wrap: break-word !important; overflow-x: visible !important; } pre code { white-space: pre-wrap !important; word-wrap: break-word !important; } table { table-layout: fixed; } td, th { word-wrap: break-word; overflow-wrap: break-word; } img { max-width: 100% !important; } body { overflow-wrap: break-word; word-break: break-word; } }';
+            document.head.appendChild(style);
+        })()
+    )";
+    m_webView->page()->runJavaScript(js, [then](const QVariant &) { then(); });
+}
+
+void MarkdownPreview::removePrintCss()
+{
+    m_webView->page()->runJavaScript(
+        "var el = document.getElementById('pdf-print-fix'); if (el) el.remove();");
+}
+
+void MarkdownPreview::postProcessPdf(const QByteArray &pdfData, const QString &filePath,
+                                      const QPageLayout &layout, const QString &pageNumbering, bool pageBorder)
+{
+    QPdfDocument doc;
+    QBuffer buf;
+    buf.setData(pdfData);
+    buf.open(QIODevice::ReadOnly);
+    doc.load(&buf);
+
+    int pageCount = doc.pageCount();
+    if (pageCount <= 0) {
+        QFile f(filePath);
+        if (f.open(QIODevice::WriteOnly))
+            f.write(pdfData);
+        return;
+    }
+
+    const int dpi = 300;
+    QPdfWriter writer(filePath);
+    writer.setPageLayout(layout);
+    writer.setResolution(dpi);
+    QPainter painter(&writer);
+
+    for (int i = 0; i < pageCount; ++i) {
+        if (i > 0) writer.newPage();
+
+        QSizeF srcSize = doc.pagePointSize(i);
+        QSize renderSize(static_cast<int>(srcSize.width() * dpi / 72.0),
+                         static_cast<int>(srcSize.height() * dpi / 72.0));
+        QImage img = doc.render(i, renderSize);
+
+        QRectF fullRect = layout.fullRect(QPageLayout::Point);
+        QRectF paintRect = layout.paintRect(QPageLayout::Point);
+        double pxPerPt = dpi / 72.0;
+        QMarginsF margins = layout.margins(QPageLayout::Point);
+
+        QRectF target(-margins.left() * pxPerPt, -margins.top() * pxPerPt,
+                      fullRect.width() * pxPerPt, fullRect.height() * pxPerPt);
+        painter.drawImage(target, img);
+
+        double pw = paintRect.width() * pxPerPt;
+        double ph = paintRect.height() * pxPerPt;
+        double ml = margins.left() * pxPerPt;
+        double mt = margins.top() * pxPerPt;
+        double mr = margins.right() * pxPerPt;
+        double mb = margins.bottom() * pxPerPt;
+        double fw = fullRect.width() * pxPerPt;
+        double fh = fullRect.height() * pxPerPt;
+        painter.setPen(Qt::NoPen);
+        painter.setBrush(Qt::white);
+        double overlap = 3.0;
+        painter.drawRect(QRectF(-ml, -mt, fw, mt + overlap));
+        painter.drawRect(QRectF(-ml, ph - overlap, fw, mb + overlap));
+        painter.drawRect(QRectF(-ml, -mt, ml + overlap, fh));
+        painter.drawRect(QRectF(pw - overlap, -mt, mr + overlap, fh));
+
+        if (pageBorder) {
+            painter.setPen(QPen(QColor(180, 180, 180), 1.0));
+            painter.setBrush(Qt::NoBrush);
+            painter.drawRect(QRectF(0, 0, pw, ph));
+        }
+
+        QString numText;
+        if (pageNumbering == "page/total")
+            numText = QString("%1 / %2").arg(i + 1).arg(pageCount);
+        else
+            numText = QString::number(i + 1);
+
+        QFont font("Helvetica", 9);
+        painter.setFont(font);
+        painter.setPen(QColor(136, 136, 136));
+        QFontMetricsF fm(font, &writer);
+        double textWidth = fm.horizontalAdvance(numText);
+        double paintWidthDev = paintRect.width() * pxPerPt;
+        double paintHeightDev = paintRect.height() * pxPerPt;
+        double x = (paintWidthDev - textWidth) / 2.0;
+        double y = paintHeightDev + margins.bottom() * pxPerPt * 0.4;
+        painter.drawText(QPointF(x, y), numText);
+    }
+
+    painter.end();
+}
+
+void MarkdownPreview::exportToPdf(const QString &filePath, int marginLeft, int marginRight,
+                                  const QString &pageNumbering, bool landscape, bool pageBorder)
+{
+    auto orientation = landscape ? QPageLayout::Landscape : QPageLayout::Portrait;
+    QPageLayout layout(QPageSize(QPageSize::A4), orientation,
+                       QMarginsF(marginLeft, 10, marginRight, 10),
+                       QPageLayout::Millimeter);
+
+    bool needsPostProcess = (pageNumbering != "none") || pageBorder;
+
+    injectPrintCss([this, filePath, layout, pageNumbering, pageBorder, needsPostProcess]() {
+        if (!needsPostProcess) {
+            m_webView->page()->printToPdf(filePath, layout);
+            removePrintCss();
+            return;
+        }
+        m_webView->page()->printToPdf(
+            [this, filePath, layout, pageNumbering, pageBorder](const QByteArray &pdfData) {
+                postProcessPdf(pdfData, filePath, layout, pageNumbering, pageBorder);
+                removePrintCss();
+            }, layout);
+    });
+}
+
+// ── Markdown → HTML via cmark-gfm ──────────────────────────────────
+
+static void injectMathSpans(cmark_node *root)
+{
+    static QRegularExpression reDispMath(QStringLiteral("\\$\\$([\\s\\S]+?)\\$\\$"));
+    static QRegularExpression reInlineMath(QStringLiteral("(?<!\\$)\\$(?!\\s)(?:[^$\\\\]|\\\\.)+?\\$(?!\\$)"));
+
+    QVector<cmark_node *> textNodes;
+    cmark_iter *iter = cmark_iter_new(root);
+    cmark_event_type ev;
+    while ((ev = cmark_iter_next(iter)) != CMARK_EVENT_DONE) {
+        if (ev != CMARK_EVENT_ENTER) continue;
+        cmark_node *node = cmark_iter_get_node(iter);
+        if (cmark_node_get_type(node) != CMARK_NODE_TEXT) continue;
+        cmark_node *p = cmark_node_parent(node);
+        if (p) {
+            cmark_node_type pt = cmark_node_get_type(p);
+            if (pt == CMARK_NODE_CODE || pt == CMARK_NODE_CODE_BLOCK) continue;
+        }
+        textNodes.append(node);
+    }
+    cmark_iter_free(iter);
+
+    for (cmark_node *node : textNodes) {
+        QString text = QString::fromUtf8(cmark_node_get_literal(node));
+
+        struct MathMatch { qsizetype pos; qsizetype len; QString html; };
+        QVector<MathMatch> matches;
+
+        auto itD = reDispMath.globalMatch(text);
+        while (itD.hasNext()) {
+            auto m = itD.next();
+            QString inner = m.captured(1);
+            matches.append({m.capturedStart(), m.capturedLength(),
+                QStringLiteral("<span class=\"katex-display\">") + inner.toHtmlEscaped() + QStringLiteral("</span>")});
+        }
+
+        auto itI = reInlineMath.globalMatch(text);
+        while (itI.hasNext()) {
+            auto m = itI.next();
+            bool overlaps = false;
+            for (const auto &dm : matches) {
+                if (m.capturedStart() >= dm.pos && m.capturedStart() < dm.pos + dm.len) {
+                    overlaps = true; break;
+                }
+            }
+            if (overlaps) continue;
+            QString full = m.captured();
+            QString inner = full.mid(1, full.length() - 2);
+            matches.append({m.capturedStart(), m.capturedLength(),
+                QStringLiteral("<span class=\"katex-inline\">") + inner.toHtmlEscaped() + QStringLiteral("</span>")});
+        }
+
+        if (matches.isEmpty()) continue;
+
+        std::sort(matches.begin(), matches.end(),
+                  [](const MathMatch &a, const MathMatch &b) { return a.pos < b.pos; });
+
+        qsizetype lastEnd = 0;
+        cmark_node *insertAfter = nullptr;
+
+        for (const auto &mm : matches) {
+            if (mm.pos > lastEnd) {
+                QString before = text.mid(lastEnd, mm.pos - lastEnd);
+                cmark_node *tn = cmark_node_new(CMARK_NODE_TEXT);
+                cmark_node_set_literal(tn, before.toUtf8().constData());
+                if (!insertAfter)
+                    cmark_node_insert_before(node, tn);
+                else
+                    cmark_node_insert_after(insertAfter, tn);
+                insertAfter = tn;
+            }
+            cmark_node *hn = cmark_node_new(CMARK_NODE_HTML_INLINE);
+            cmark_node_set_literal(hn, mm.html.toUtf8().constData());
+            if (!insertAfter)
+                cmark_node_insert_before(node, hn);
+            else
+                cmark_node_insert_after(insertAfter, hn);
+            insertAfter = hn;
+            lastEnd = mm.pos + mm.len;
+        }
+
+        if (lastEnd < text.length()) {
+            QString after = text.mid(lastEnd);
+            cmark_node *tn = cmark_node_new(CMARK_NODE_TEXT);
+            cmark_node_set_literal(tn, after.toUtf8().constData());
+            if (!insertAfter)
+                cmark_node_insert_before(node, tn);
+            else
+                cmark_node_insert_after(insertAfter, tn);
+        }
+
+        cmark_node_free(node);
+    }
+}
+
+QString MarkdownPreview::markdownToHtml(const QString &md)
+{
+    QByteArray utf8 = md.toUtf8();
+    int options = CMARK_OPT_DEFAULT | CMARK_OPT_UNSAFE;
+
+    cmark_parser *parser = cmark_parser_new(options);
+
+    const char *extNames[] = {"table", "strikethrough", "autolink", "tagfilter", nullptr};
+    for (int i = 0; extNames[i]; ++i) {
+        cmark_syntax_extension *ext = cmark_find_syntax_extension(extNames[i]);
+        if (ext) cmark_parser_attach_syntax_extension(parser, ext);
+    }
+
+    cmark_parser_feed(parser, utf8.constData(), utf8.size());
+    cmark_node *doc = cmark_parser_finish(parser);
+
+    injectMathSpans(doc);
+
+    char *result = cmark_render_html(doc, options, cmark_parser_get_syntax_extensions(parser));
+    QString html = QString::fromUtf8(result);
+    free(result);
+
+    cmark_node_free(doc);
+    cmark_parser_free(parser);
+
+    return html;
 }

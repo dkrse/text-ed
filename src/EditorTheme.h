@@ -5,6 +5,7 @@
 
 struct EditorTheme {
     QString name;
+    bool isDark = false;
 
     // Editor colors
     QColor background;
@@ -13,6 +14,20 @@ struct EditorTheme {
     QColor lineNumberBg;
     QColor lineNumberFg;
     QColor selection;
+
+    // UI chrome colors
+    QColor titleBarBg;
+    QColor tabBarBg;
+    QColor tabInactiveBg;
+    QColor tabActiveBg;
+    QColor statusBarBg;
+    QColor scrollTrackBg;
+    QColor scrollThumbBg;
+    QColor scrollThumbHover;
+    QColor panelBg;
+    QColor border;
+    QColor elementHover;
+    QColor textMuted;
 
     // Syntax highlighting colors
     QColor keyword;
@@ -24,7 +39,8 @@ struct EditorTheme {
     QColor preprocessor;
     QColor operatorColor;
 
-    static const QVector<EditorTheme> &builtinThemes();
+    static void loadFromDirectory(const QString &dirPath);
+    static const QVector<EditorTheme> &themes();
     static const EditorTheme &themeByName(const QString &name);
     static QStringList themeNames();
 };

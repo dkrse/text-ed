@@ -3,82 +3,108 @@
 MarkdownHighlighter::MarkdownHighlighter(QTextDocument *parent)
     : QSyntaxHighlighter(parent)
 {
+    m_codeBlockStart = QRegularExpression(QStringLiteral("^```"));
+    m_mermaidBlockStart = QRegularExpression(QStringLiteral("^```mermaid"), QRegularExpression::CaseInsensitiveOption);
+    m_codeBlockEnd = QRegularExpression(QStringLiteral("^```\\s*$"));
+    buildRules();
+}
+
+void MarkdownHighlighter::setDarkTheme(bool dark)
+{
+    m_dark = dark;
+    buildRules();
+    rehighlight();
+}
+
+void MarkdownHighlighter::buildRules()
+{
+    m_rules.clear();
+
+    QColor headingC   = m_dark ? QColor("#e5c07b") : QColor("#1a73e8");
+    QColor codeC      = m_dark ? QColor("#98c379") : QColor("#d63384");
+    QColor codeBgC    = m_dark ? QColor("#2d2d2d") : QColor("#f0f0f0");
+    QColor linkC      = m_dark ? QColor("#61afef") : QColor("#0969da");
+    QColor quoteC     = m_dark ? QColor("#5c6370") : QColor("#636c76");
+    QColor listC      = m_dark ? QColor("#d19a66") : QColor("#8250df");
+    QColor hrC        = m_dark ? QColor("#5c6370") : QColor("#888888");
+    QColor mathC      = m_dark ? QColor("#56b6c2") : QColor("#b5651d");
+    QColor boldC      = m_dark ? QColor("#e06c75") : QColor();
+    QColor italicC    = m_dark ? QColor("#c678dd") : QColor();
+    QColor codeBlkBg  = m_dark ? QColor("#2d2d2d") : QColor("#f6f8fa");
+    QColor codeBlkFg  = m_dark ? QColor("#abb2bf") : QColor("#24292f");
+    QColor mermaidBg  = m_dark ? QColor("#1e3a5f") : QColor("#f0f7ff");
+    QColor mermaidFg  = m_dark ? QColor("#61afef") : QColor("#0969da");
+
     // Headings
     QTextCharFormat headingFmt;
     headingFmt.setFontWeight(QFont::Bold);
-    headingFmt.setForeground(QColor("#1a73e8"));
+    headingFmt.setForeground(headingC);
     m_rules.append({QRegularExpression(QStringLiteral("^#{1,6}\\s.*")), headingFmt});
 
-    // Bold **text** or __text__
+    // Bold
     QTextCharFormat boldFmt;
     boldFmt.setFontWeight(QFont::Bold);
+    if (boldC.isValid()) boldFmt.setForeground(boldC);
     m_rules.append({QRegularExpression(QStringLiteral("\\*\\*(.+?)\\*\\*")), boldFmt});
     m_rules.append({QRegularExpression(QStringLiteral("__(.+?)__")), boldFmt});
 
-    // Italic *text* or _text_
+    // Italic
     QTextCharFormat italicFmt;
     italicFmt.setFontItalic(true);
+    if (italicC.isValid()) italicFmt.setForeground(italicC);
     m_rules.append({QRegularExpression(QStringLiteral("(?<!\\*)\\*(?!\\*)(.+?)(?<!\\*)\\*(?!\\*)")), italicFmt});
     m_rules.append({QRegularExpression(QStringLiteral("(?<!_)_(?!_)(.+?)(?<!_)_(?!_)")), italicFmt});
 
-    // Inline code `text`
+    // Inline code
     QTextCharFormat codeFmt;
     codeFmt.setFontFamilies({QStringLiteral("Monospace")});
-    codeFmt.setBackground(QColor("#f0f0f0"));
-    codeFmt.setForeground(QColor("#d63384"));
+    codeFmt.setBackground(codeBgC);
+    codeFmt.setForeground(codeC);
     m_rules.append({QRegularExpression(QStringLiteral("`[^`]+`")), codeFmt});
 
-    // Links [text](url)
+    // Links
     QTextCharFormat linkFmt;
-    linkFmt.setForeground(QColor("#0969da"));
+    linkFmt.setForeground(linkC);
     linkFmt.setFontUnderline(true);
     m_rules.append({QRegularExpression(QStringLiteral("\\[([^\\]]+)\\]\\([^)]+\\)")), linkFmt});
 
-    // Block quotes > text
+    // Block quotes
     QTextCharFormat quoteFmt;
-    quoteFmt.setForeground(QColor("#636c76"));
+    quoteFmt.setForeground(quoteC);
     quoteFmt.setFontItalic(true);
     m_rules.append({QRegularExpression(QStringLiteral("^>\\s.*")), quoteFmt});
 
-    // Lists - item, * item, + item, 1. item
+    // Lists
     QTextCharFormat listFmt;
-    listFmt.setForeground(QColor("#8250df"));
+    listFmt.setForeground(listC);
     m_rules.append({QRegularExpression(QStringLiteral("^\\s*[-*+]\\s")), listFmt});
     m_rules.append({QRegularExpression(QStringLiteral("^\\s*\\d+\\.\\s")), listFmt});
 
     // Horizontal rule
     QTextCharFormat hrFmt;
-    hrFmt.setForeground(QColor("#888888"));
+    hrFmt.setForeground(hrC);
     m_rules.append({QRegularExpression(QStringLiteral("^(---|\\*\\*\\*|___)\\s*$")), hrFmt});
 
-    // LaTeX display math $$...$$
+    // Math
     QTextCharFormat mathFmt;
-    mathFmt.setForeground(QColor("#b5651d"));
+    mathFmt.setForeground(mathC);
     mathFmt.setFontFamilies({QStringLiteral("Monospace")});
     m_rules.append({QRegularExpression(QStringLiteral("\\$\\$.+?\\$\\$")), mathFmt});
-
-    // LaTeX inline math $...$
     m_rules.append({QRegularExpression(QStringLiteral("(?<!\\$)\\$(?!\\$).+?(?<!\\$)\\$(?!\\$)")), mathFmt});
 
     // Fenced code blocks
     m_codeBlockFormat.setFontFamilies({QStringLiteral("Monospace")});
-    m_codeBlockFormat.setBackground(QColor("#f6f8fa"));
-    m_codeBlockFormat.setForeground(QColor("#24292f"));
+    m_codeBlockFormat.setBackground(codeBlkBg);
+    m_codeBlockFormat.setForeground(codeBlkFg);
 
     // Mermaid blocks
     m_mermaidBlockFormat.setFontFamilies({QStringLiteral("Monospace")});
-    m_mermaidBlockFormat.setBackground(QColor("#f0f7ff"));
-    m_mermaidBlockFormat.setForeground(QColor("#0969da"));
-
-    m_codeBlockStart = QRegularExpression(QStringLiteral("^```"));
-    m_mermaidBlockStart = QRegularExpression(QStringLiteral("^```mermaid"), QRegularExpression::CaseInsensitiveOption);
-    m_codeBlockEnd = QRegularExpression(QStringLiteral("^```\\s*$"));
+    m_mermaidBlockFormat.setBackground(mermaidBg);
+    m_mermaidBlockFormat.setForeground(mermaidFg);
 }
 
 void MarkdownHighlighter::highlightBlock(const QString &text)
 {
-    // Handle fenced code blocks (multi-line state)
-    // State: 0 = normal, 1 = inside code block, 2 = inside mermaid block
     int prevState = previousBlockState();
     if (prevState == -1) prevState = 0;
 
@@ -107,7 +133,6 @@ void MarkdownHighlighter::highlightBlock(const QString &text)
 
     setCurrentBlockState(0);
 
-    // Apply inline rules
     for (const auto &rule : m_rules) {
         auto it = rule.pattern.globalMatch(text);
         while (it.hasNext()) {

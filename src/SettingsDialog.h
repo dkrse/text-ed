@@ -25,6 +25,7 @@ struct AppSettings {
     bool minimap = false;
     bool showRuler = false;
     int rulerColumn = 80;
+    double lineSpacing = 1.0;
 };
 
 class SettingsDialog : public QDialog
@@ -56,6 +57,7 @@ private:
     QCheckBox *m_minimap;
     QCheckBox *m_showRuler;
     QSpinBox *m_rulerColumn;
+    QComboBox *m_lineSpacingCombo;
 
     QFontComboBox *m_guiFontCombo;
     QSpinBox *m_guiFontSize;

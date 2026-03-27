@@ -16,14 +16,47 @@
 #include <QInputDialog>
 #include <QMessageBox>
 #include <QSplitter>
+#include <QToolButton>
+#include <QLabel>
+#include <QMouseEvent>
+#include <QWindow>
 
 SshConnectDialog::SshConnectDialog(QWidget *parent)
     : QDialog(parent)
 {
-    setWindowTitle(tr("Connect to SSH Server"));
+    setWindowFlags(Qt::FramelessWindowHint | Qt::Dialog);
     setMinimumSize(600, 420);
 
-    auto *mainLayout = new QHBoxLayout(this);
+    // Custom title bar
+    auto *titleBar = new QWidget(this);
+    titleBar->setFixedHeight(32);
+    titleBar->setObjectName("dialogTitleBar");
+    auto *titleLayout = new QHBoxLayout(titleBar);
+    titleLayout->setContentsMargins(10, 0, 0, 0);
+    titleLayout->setSpacing(0);
+
+    auto *titleLabel = new QLabel(tr("Connect to SSH Server"), titleBar);
+    titleLayout->addWidget(titleLabel);
+    titleLayout->addStretch();
+
+    auto *closeBtn = new QToolButton(titleBar);
+    closeBtn->setText("\u2715");
+    closeBtn->setFixedSize(46, 32);
+    closeBtn->setObjectName("dialogCloseBtn");
+    connect(closeBtn, &QToolButton::clicked, this, &QDialog::reject);
+    titleLayout->addWidget(closeBtn);
+
+    // Make title bar draggable
+    titleBar->installEventFilter(this);
+
+    auto *outerLayout = new QVBoxLayout(this);
+    outerLayout->setContentsMargins(0, 0, 0, 0);
+    outerLayout->setSpacing(0);
+    outerLayout->addWidget(titleBar);
+
+    auto *contentWidget = new QWidget(this);
+    auto *mainLayout = new QHBoxLayout(contentWidget);
+    outerLayout->addWidget(contentWidget, 1);
 
     // Left: saved connections
     auto *leftWidget = new QWidget;
@@ -261,4 +294,19 @@ void SshConnectDialog::populateList()
     for (const auto &c : m_saved) {
         m_connectionList->addItem(c.name);
     }
+}
+
+bool SshConnectDialog::eventFilter(QObject *obj, QEvent *event)
+{
+    if (obj->objectName() == "dialogTitleBar") {
+        if (event->type() == QEvent::MouseButtonPress) {
+            auto *me = static_cast<QMouseEvent *>(event);
+            if (me->button() == Qt::LeftButton) {
+                if (auto *win = windowHandle())
+                    win->startSystemMove();
+                return true;
+            }
+        }
+    }
+    return QDialog::eventFilter(obj, event);
 }

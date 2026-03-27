@@ -2,7 +2,7 @@
 
 ## Overview
 
-TextEd is a Qt 6 Widgets application written in C++17. It follows a modular design where each major feature is encapsulated in its own class. The application uses `QPlainTextEdit` as the core editor widget, `QWebEngineView` (wrapped in a `QWidget`) for Markdown preview rendering, and `libssh2` for SSH/SFTP remote file access.
+TextEd is a Qt 6 Widgets application written in C++17. It follows a modular design where each major feature is encapsulated in its own class. The application uses `QPlainTextEdit` as the core editor widget, `QWebEngineView` (wrapped in a `QWidget`) for Markdown preview rendering, `cmark-gfm` for Markdown parsing, and `libssh2` for SSH/SFTP remote file access.
 
 ## Component Diagram
 
@@ -10,17 +10,19 @@ TextEd is a Qt 6 Widgets application written in C++17. It follows a modular desi
 MainWindow (frameless window)
 ├── TitleBar (custom title bar)
 │   ├── QToolButton (hamburger menu ☰)
-│   ├── QTabBar (document tabs)
+│   ├── QTabBar (document tabs with close buttons)
 │   └── Window controls (minimize, maximize, close)
 ├── QTabWidget (multi-document content, tab bar hidden)
 │   ├── QWidget container (per editor tab)
 │   │   ├── Editor
+│   │   │   ├── SpacedDocumentLayout (line spacing)
 │   │   │   ├── LineNumberArea
 │   │   │   ├── ScrollBarOverlay (search match markers)
-│   │   │   ├── MarkdownHighlighter (for .md files)
+│   │   │   ├── MarkdownHighlighter (for .md files, dark/light aware)
 │   │   │   └── CodeHighlighter (for code files)
 │   │   └── Minimap (VS Code-style code overview)
 │   └── MarkdownPreview (per preview tab, QWidget + QWebEngineView)
+│       └── cmark-gfm (Markdown → HTML)
 ├── SearchBar (find & replace bar)
 ├── SshSession (SSH/SFTP connection)
 └── AppSettings / EditorTheme
@@ -33,9 +35,9 @@ MainWindow (frameless window)
 | File | Description |
 |---|---|
 | `main.cpp` | Application entry point, initializes QtWebEngine and opens files from command line arguments |
-| `MainWindow.h/cpp` | Main application window (frameless) with custom title bar, tab management, multiple preview tabs, status bar, settings, SSH integration, session restore, recent files, auto-save, drag & drop, WebEngine warmup |
-| `TitleBar.h/cpp` | Custom title bar widget with hamburger menu (☰), QTabBar, window controls (minimize, maximize, close), mouse drag to move, double-click to maximize, theme-aware styling |
-| `Editor.h/cpp` | `QPlainTextEdit` subclass with line number gutter, current line highlighting, font zoom, theme support, search match highlighting, auto-indent, bracket matching |
+| `MainWindow.h/cpp` | Main application window (frameless) with custom title bar, tab management, multiple preview tabs, status bar, settings, SSH integration, session restore, recent files, auto-save, drag & drop, WebEngine warmup, theme system via `setStyleSheet()` |
+| `TitleBar.h/cpp` | Custom title bar widget with hamburger menu (☰), QTabBar with close buttons, window controls (minimize, maximize, close), mouse drag to move, double-click to maximize, theme-aware styling |
+| `Editor.h/cpp` | `QPlainTextEdit` subclass with `SpacedDocumentLayout` for line spacing, line number gutter, current line highlighting, font zoom, theme support, search match highlighting, auto-indent, bracket matching |
 
 ### Search & Replace
 
@@ -53,14 +55,14 @@ MainWindow (frameless window)
 
 | File | Description |
 |---|---|
-| `MarkdownHighlighter.h/cpp` | `QSyntaxHighlighter` for Markdown syntax (headings, bold, italic, code, links, LaTeX, fenced blocks) |
-| `CodeHighlighter.h/cpp` | `QSyntaxHighlighter` for 28 programming languages with theme-aware colors |
+| `MarkdownHighlighter.h/cpp` | `QSyntaxHighlighter` for Markdown syntax with `setDarkTheme()` support; rebuilds color rules for dark/light themes (headings, bold, italic, code, links, LaTeX, fenced blocks) |
+| `CodeHighlighter.h/cpp` | `QSyntaxHighlighter` for 28 programming languages with theme-aware colors via `applyThemeColors()` |
 
 ### Markdown Preview
 
 | File | Description |
 |---|---|
-| `MarkdownPreview.h/cpp` | `QWidget` containing a `QWebEngineView` with internal debounce timer (400ms). Converts Markdown to HTML with KaTeX math, Mermaid diagrams, highlight.js code blocks, tables, ordered/unordered lists, blockquotes, and strikethrough. Supports dark/light mode, zoom (Ctrl+/- and Ctrl+scroll), multi-line LaTeX, and PDF export. Resources are extracted to a shared temp directory with integrity checking. |
+| `MarkdownPreview.h/cpp` | `QWidget` containing a `QWebEngineView` with internal debounce timer (400ms). Uses **cmark-gfm** library for spec-compliant Markdown → HTML conversion with GFM extensions (table, strikethrough, autolink, tagfilter). Math expressions are injected into the cmark-gfm AST as HTML inline nodes. Supports dark/light mode with separate highlight.js CSS, zoom, and advanced PDF export with page numbering, margins, orientation, and page borders via QPdfDocument/QPdfWriter post-processing. |
 
 ### File I/O
 
@@ -73,15 +75,15 @@ MainWindow (frameless window)
 | File | Description |
 |---|---|
 | `SshSession.h/cpp` | Wrapper around libssh2 for SSH connection, authentication (password/key), and SFTP operations (list, read, write, mkdir, rmdir, unlink, rename). Includes 512 MB remote file size limit. |
-| `SshConnectDialog.h/cpp` | Connection dialog with host, port, username, password/key authentication options, saved connection profiles (persisted via QSettings, passwords are never stored) |
+| `SshConnectDialog.h/cpp` | Frameless connection dialog with custom title bar, host/port/username fields, password/key authentication options, saved connection profiles (persisted via QSettings, passwords are never stored) |
 | `RemoteFileBrowser.h/cpp` | Remote filesystem browser dialog with tree view, navigation, file selection, and file management (create, rename, delete files and directories) |
 
 ### Settings and Themes
 
 | File | Description |
 |---|---|
-| `SettingsDialog.h/cpp` | Settings dialog with Editor and Appearance tabs. Defines `AppSettings` struct with all configurable options (including vertical ruler and its column position). |
-| `EditorTheme.h/cpp` | Defines `EditorTheme` struct with 12 built-in color themes |
+| `SettingsDialog.h/cpp` | Frameless settings dialog with Editor and Appearance tabs. Defines `AppSettings` struct with all configurable options including line spacing, vertical ruler, and its column position. |
+| `EditorTheme.h/cpp` | Loads Zed editor themes from `~/.config/ed/themes/` JSON files. Parses theme colors for editor, UI chrome, and syntax highlighting. |
 
 ## Key Design Decisions
 
@@ -91,7 +93,25 @@ Each editor tab contains a QWidget container with an `Editor` and optional `Mini
 
 ### Custom title bar
 
-The application uses a frameless window (`Qt::FramelessWindowHint`) with a custom `TitleBar` widget that combines the hamburger menu (☰), document tabs (`QTabBar`), and window controls (minimize, maximize, close) into a single 32px-high bar — similar to VS Code and Zed. The title bar supports mouse drag to move the window and double-click to maximize/restore. The `QTabWidget`'s built-in tab bar is hidden; tab state is synced between the title bar's `QTabBar` and the `QTabWidget` via signals. The traditional menu bar is hidden via `menuBar()->hide()`, and all menus are organized as submenus inside the hamburger button with `InstantPopup` mode.
+The application uses a frameless window (`Qt::FramelessWindowHint`) with a custom `TitleBar` widget that combines the hamburger menu (☰), document tabs (`QTabBar` with close buttons), and window controls (minimize, maximize, close) into a single 32px-high bar — similar to VS Code and Zed. The title bar supports mouse drag to move the window and double-click to maximize/restore. The `QTabWidget`'s built-in tab bar is hidden; tab state is synced between the title bar's `QTabBar` and the `QTabWidget` via signals. The traditional menu bar is hidden via `menuBar()->hide()`, and all menus are organized as submenus inside the hamburger button with `InstantPopup` mode.
+
+### Line spacing
+
+Line spacing is implemented via a custom `SpacedDocumentLayout` class that extends `QPlainTextDocumentLayout`. The `blockBoundingRect()` override multiplies block heights by a configurable spacing factor (1.0 - 2.0). The layout is set on the editor's document in the `Editor` constructor.
+
+### Theme system
+
+Themes are loaded from `~/.config/ed/themes/` in Zed editor JSON format via `EditorTheme::loadFromDirectory()`. Themes are reloaded when opening the Settings dialog (no file watcher — avoids issues with atomic saves on Linux).
+
+The theme is applied via `MainWindow::applyThemeToApp()` which sets a stylesheet on the MainWindow (not `qApp` — using `qApp->setStyleSheet()` causes Qt to ignore `setPalette()` on all widgets). The stylesheet covers `QPlainTextEdit`, `QStatusBar`, `QLabel`, `QScrollBar`, and dialog elements. After the global palette is set, individual editors receive `applyTheme()` calls to set their specific palette and update syntax highlighter colors. A cascade `update()` on all child widgets ensures full repaint.
+
+### Markdown preview with cmark-gfm
+
+The preview uses GitHub's cmark-gfm library (fetched via CMake FetchContent, built statically) for spec-compliant Markdown parsing with GFM extensions. LaTeX math expressions are detected in text nodes of the AST and replaced with HTML inline nodes containing KaTeX spans, avoiding regex-based post-processing. The rendered HTML includes theme-aware CSS, KaTeX for math, Mermaid.js for diagrams, and highlight.js with dark/light CSS variants.
+
+### PDF export with post-processing
+
+PDF export supports configurable margins, page numbering, orientation, and page borders. When post-processing is needed (page numbers or borders), the PDF is first rendered to a byte array, then loaded via `QPdfDocument`, and re-rendered through `QPdfWriter` with `QPainter` to add decorations. Print CSS is injected before export and removed after.
 
 ### Modification tracking
 
@@ -105,17 +125,13 @@ Each markdown file can have its own preview tab, opened right next to the source
 
 On startup, a hidden 0x0 `QWebEngineView` loads `about:blank` and is deleted on completion. This pre-initializes the Chromium subprocess so that the first Markdown preview opens without a visible flicker.
 
-### Multi-line LaTeX math
-
-Before line-by-line markdown processing, code blocks and code spans are masked, then multi-line math expressions (`$$...$$` and `$...$` spanning multiple lines) are extracted into placeholders. After the line-by-line conversion, placeholders are restored as KaTeX spans (`<span class="katex-display">` / `<span class="katex-inline">`).
-
 ### Context-aware zoom
 
 Ctrl+Plus/Minus and Ctrl+scroll are context-aware: when a preview tab is active, they zoom the preview (`QWebEngineView::setZoomFactor`); otherwise they zoom the editor font.
 
 ### Settings persistence
 
-All `AppSettings` values (fonts, theme, editor behavior, ruler, minimap, auto-save) are persisted via `QSettings` in the `settings/` group. `loadSettings()` runs at startup before any UI is created. `saveSettings()` runs after the Settings dialog is accepted and on application close. This ensures the full editor configuration survives restarts.
+All `AppSettings` values (fonts, theme, editor behavior, ruler, minimap, auto-save, line spacing) are persisted via `QSettings` in the `settings/` group. `loadSettings()` runs at startup before any UI is created. `saveSettings()` runs after the Settings dialog is accepted and on application close. This ensures the full editor configuration survives restarts.
 
 ### Session persistence
 
@@ -143,24 +159,11 @@ The main window accepts file drops via `dragEnterEvent`/`dropEvent`. Dropped fil
 
 ### Offline-first architecture
 
-All third-party rendering libraries (KaTeX, Mermaid.js, highlight.js) are embedded in the Qt resource system (`resources.qrc`). At runtime, `MarkdownPreview::deployResources()` extracts them to a shared temp directory (`/tmp/text-ed-preview`) with integrity checking (re-extracts only if on-disk copy differs from bundled resource). `LocalContentCanAccessRemoteUrls` is set to `false` to block any network requests. This ensures the application works without any network access.
+All third-party rendering libraries (KaTeX, Mermaid.js, highlight.js) are embedded in the Qt resource system (`resources.qrc`). At runtime, `MarkdownPreview::deployResources()` extracts them to a shared temp directory (`/tmp/text-ed-preview`) with integrity checking (re-extracts only if on-disk copy differs from bundled resource). KaTeX CSS font paths are rewritten to absolute `file://` URLs. `LocalContentCanAccessRemoteUrls` is set to `false` to block any network requests.
 
-### Markdown preview rendering
+### Frameless dialogs
 
-The preview uses a multi-stage pipeline:
-1. **Math protection** — mask code blocks/spans, extract multi-line LaTeX into placeholders
-2. `markdownToHtml()` — line-by-line conversion with support for headings, bold, italic, code, strikethrough, links, images, lists (ordered/unordered), blockquotes, tables with alignment, horizontal rules, fenced code blocks, and mermaid blocks
-3. `buildHtml()` — wraps the body in a full HTML document with theme-aware CSS, KaTeX, Mermaid (with dark/default theme), and highlight.js scripts
-4. **Math restoration** — replace placeholders with KaTeX spans
-5. Write to temp file and load via `QWebEngineView::load()`
-
-### Theme system
-
-`EditorTheme` defines colors for: background, foreground, current line, line numbers, selection, and 8 syntax categories (keyword, type, string, comment, number, function, preprocessor, operator). Themes are applied to the `Editor` palette, line number area, minimap background, and forwarded to `CodeHighlighter` which rebuilds its format rules. Dark themes also set a dark `QApplication::setPalette()` so that menus, status bar, and dialogs match the editor background. The custom title bar, scrollbars, and status bar combo boxes (language, encoding) are explicitly styled with theme colors via `setStyleSheet()` so they respond to every theme change. Preview dark mode is auto-updated when theme changes. Theme colors are re-applied after every highlighter creation to ensure syntax colors are always correct.
-
-### Vertical ruler
-
-The `Editor` draws a semi-transparent vertical line at a configurable column position via `paintEvent()`. The ruler column and visibility are stored in `AppSettings` and configurable in Settings. The x-position is calculated from `fontMetrics().horizontalAdvance(' ') * rulerColumn + contentOffset().x()`.
+All dialogs (Settings, SSH Connect) use `Qt::FramelessWindowHint` with custom title bars matching the main window style. Title bars use `#dialogTitleBar` and `#dialogCloseBtn` object names for consistent stylesheet theming. Dragging is implemented via `eventFilter` + `QWindow::startSystemMove()`.
 
 ### Saved SSH connections
 
@@ -180,13 +183,17 @@ The `Editor` draws a semi-transparent vertical line at a configurable column pos
 
 ## Build System
 
-CMake with `AUTOMOC` and `AUTORCC` enabled. Dependencies:
-- `Qt6::Widgets`, `Qt6::Core`, `Qt6::Gui`, `Qt6::WebEngineWidgets`, `Qt6::WebEngineQuick`
+CMake with `AUTOMOC` and `AUTORCC` enabled. cmark-gfm is fetched via `FetchContent` and built as a static library.
+
+Dependencies:
+- `Qt6::Widgets`, `Qt6::Core`, `Qt6::Gui`, `Qt6::WebEngineWidgets`, `Qt6::WebEngineQuick`, `Qt6::PdfWidgets`
 - `libssh2`
+- `libcmark-gfm_static`, `libcmark-gfm-extensions_static`
 
 ## Resource Bundle
 
 `resources.qrc` includes:
-- `resources/katex/katex.min.js`, `katex.min.css`, `fonts/*.woff2` (20 font files)
+- `resources/katex/katex.min.js`, `katex.min.css`, `fonts/*.woff2` (20+ font files)
 - `resources/mermaid/mermaid.min.js`
-- `resources/hljs/highlight.min.js`, `github.min.css`
+- `resources/hljs/highlight.min.js`, `github.min.css`, `hljs-dark.min.css`, `hljs-light.min.css`
+- `resources/icon.svg`
